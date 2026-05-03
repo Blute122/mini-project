@@ -33,6 +33,7 @@
     <div class="panel">
         <h3>2. Local Daemon Connection</h3>
         <p><span id="connStatus" class="status-dot"></span><span id="connText">Disconnected from Core</span></p>
+        <button id="handshakeBtn" class="primary-btn" disabled>Initiate Peer Handshake</button>
     </div>
 
     <div class="panel">
@@ -45,9 +46,12 @@
         </div>
     </div>
 
-    <script>
+    <script type="module">
+        import { HandshakeManager } from './handshake.js';
+
         let localKeyPair = null;
         let coreSocket = null;
+        let handshakeManager = null;
 
         const log = (msg) => {
             const time = new Date().toLocaleTimeString();
@@ -88,9 +92,12 @@
             coreSocket.onopen = () => {
                 document.getElementById('connStatus').classList.add('connected');
                 document.getElementById('connText').innerText = "Connected to Rufrone Core";
-                document.getElementById('msgInput').disabled = false;
-                document.getElementById('sendBtn').disabled = false;
+                document.getElementById('handshakeBtn').disabled = false;
                 log("WebSocket bridge established.");
+
+                handshakeManager = new HandshakeManager(coreSocket, (plaintext) => {
+                    log("🔓 [Decrypted MSG]: " + plaintext);
+                });
             };
 
             coreSocket.onmessage = (event) => {
@@ -109,17 +116,31 @@
             };
         }
 
-        // --- STEP 3: Send Payload ---
-        document.getElementById('sendBtn').addEventListener('click', () => {
-            const text = document.getElementById('msgInput').value;
-            if (!text || !coreSocket) return;
+        // --- STEP 2.5: Initiate Handshake ---
+        document.getElementById('handshakeBtn').addEventListener('click', async () => {
+            if (!handshakeManager) return;
+            log("Initiating in-band Double Ratchet handshake...");
+            try {
+                await handshakeManager.initiateHandshake();
+                document.getElementById('msgInput').disabled = false;
+                document.getElementById('sendBtn').disabled = false;
+            } catch (e) {
+                log("Handshake Error: " + e.message);
+            }
+        });
 
-            // In Phase 2, we will add the Double Ratchet here. 
-            // For now, we simulate the encrypted payload output.
-            const simulatedEncryptedPayload = `[E2EE_BLOB]${btoa(text)}`; 
+        // --- STEP 3: Send Payload ---
+        document.getElementById('sendBtn').addEventListener('click', async () => {
+            const text = document.getElementById('msgInput').value;
+            if (!text) return;
             
-            log(`Sending payload to Core: ${simulatedEncryptedPayload.substring(0,20)}...`);
-            coreSocket.send(simulatedEncryptedPayload);
+            if (!handshakeManager || handshakeManager.state !== 'ESTABLISHED') {
+                log("❌ Cannot send: Double Ratchet handshake not established.");
+                return;
+            }
+
+            log(`Encrypting payload via Double Ratchet...`);
+            await handshakeManager.sendEncryptedMessage(text);
             document.getElementById('msgInput').value = '';
         });
     </script>
