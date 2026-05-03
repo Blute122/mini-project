@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rufrone Client - Phase 2</title>
+    <style>
+        :root { --bg: #0d1117; --text: #c9d1d9; --accent: #58a6ff; --border: #30363d; --success: #238636;}
+        body { font-family: 'Courier New', Courier, monospace; background-color: var(--bg); color: var(--text); padding: 20px; max-width: 600px; margin: 0 auto; }
+        h2 { border-bottom: 1px solid var(--border); padding-bottom: 10px; }
+        .panel { border: 1px solid var(--border); padding: 15px; margin-bottom: 20px; border-radius: 6px; background-color: #161b22; }
+        button { background-color: var(--border); color: var(--text); border: 1px solid #8b949e; padding: 8px 16px; cursor: pointer; font-family: inherit; margin-top: 10px; border-radius: 4px; transition: 0.2s;}
+        button:hover { background-color: #8b949e; color: #000; }
+        .primary-btn { background-color: var(--success); color: white; border: none; }
+        .primary-btn:hover { background-color: #2ea043; color: white; }
+        input[type="text"] { width: calc(100% - 22px); padding: 10px; background-color: var(--bg); color: var(--text); border: 1px solid var(--border); margin-bottom: 10px; }
+        #logArea { height: 150px; overflow-y: auto; font-size: 0.85em; color: #8b949e; border-top: 1px dashed var(--border); padding-top: 10px; margin-top: 10px; }
+        .status-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background-color: red; margin-right: 5px; }
+        .connected { background-color: var(--success); }
+    </style>
+</head>
+<body>
+
+    <h2>🛡️ Rufrone Client (Split Architecture)</h2>
+
+    <div class="panel">
+        <h3>1. Self-Sovereign Identity (SSI)</h3>
+        <p style="font-size: 0.9em;">Generates Ed25519 cryptographic keys locally. No server involved.</p>
+        <button id="genKeyBtn">Generate Local Identity (DID)</button>
+        <div id="didDisplay" style="margin-top: 10px; font-size: 0.8em; word-break: break-all; color: var(--accent);"></div>
+    </div>
+
+    <div class="panel">
+        <h3>2. Local Daemon Connection</h3>
+        <p><span id="connStatus" class="status-dot"></span><span id="connText">Disconnected from Core</span></p>
+    </div>
+
+    <div class="panel">
+        <h3>3. Secure Transmission</h3>
+        <input type="text" id="msgInput" placeholder="Type a message to send through WireGuard..." disabled>
+        <button id="sendBtn" class="primary-btn" disabled>Send Encrypted Payload</button>
+        
+        <div id="logArea">
+            <div>System initialized. Waiting for Identity...</div>
+        </div>
+    </div>
+
+    <script>
+        let localKeyPair = null;
+        let coreSocket = null;
+
+        const log = (msg) => {
+            const time = new Date().toLocaleTimeString();
+            const logArea = document.getElementById('logArea');
+            logArea.innerHTML += `<div>[${time}] ${msg}</div>`; // Append to bottom
+            logArea.scrollTop = logArea.scrollHeight;
+        };
+
+        // --- STEP 1: Generate Self-Sovereign Identity (SSI) ---
+        document.getElementById('genKeyBtn').addEventListener('click', async () => {
+            log("Generating Ed25519 keys via WebCrypto API...");
+            try {
+                // Using WebCrypto native Ed25519 for secure digital signatures/identity
+                localKeyPair = await window.crypto.subtle.generateKey(
+                    { name: "Ed25519" }, true, ["sign", "verify"]
+                );
+                
+                // Export Public Key to display as the "DID" (Decentralized Identifier)
+                const exportedPubKey = await window.crypto.subtle.exportKey("spki", localKeyPair.publicKey);
+                const pubKeyBase64 = btoa(String.fromCharCode(...new Uint8Array(exportedPubKey)));
+                
+                document.getElementById('didDisplay').innerText = "Your DID: did:key:" + pubKeyBase64.substring(0, 32) + "...";
+                log("Identity generated successfully! Private key secured in browser sandbox.");
+                
+                // Now that we have an identity, connect to the Python Daemon
+                connectToDaemon();
+            } catch (e) {
+                log("Error generating keys. Note: Ed25519 requires a modern browser context.");
+                console.error(e);
+            }
+        });
+
+        // --- STEP 2: Connect to Python Core ---
+        function connectToDaemon() {
+            log("Attempting to connect to local Rufrone Core on port 8080...");
+            coreSocket = new WebSocket('ws://localhost:8080');
+
+            coreSocket.onopen = () => {
+                document.getElementById('connStatus').classList.add('connected');
+                document.getElementById('connText').innerText = "Connected to Rufrone Core";
+                document.getElementById('msgInput').disabled = false;
+                document.getElementById('sendBtn').disabled = false;
+                log("WebSocket bridge established.");
+            };
+
+            coreSocket.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                if (data.status === "queued") {
+                    log("Core acknowledged payload. Passing to Obfuscation Engine.");
+                }
+            };
+
+            coreSocket.onclose = () => {
+                document.getElementById('connStatus').classList.remove('connected');
+                document.getElementById('connText').innerText = "Disconnected from Core";
+                document.getElementById('msgInput').disabled = true;
+                document.getElementById('sendBtn').disabled = true;
+                log("Connection lost. Make sure Python daemon is running.");
+            };
+        }
+
+        // --- STEP 3: Send Payload ---
+        document.getElementById('sendBtn').addEventListener('click', () => {
+            const text = document.getElementById('msgInput').value;
+            if (!text || !coreSocket) return;
+
+            // In Phase 2, we will add the Double Ratchet here. 
+            // For now, we simulate the encrypted payload output.
+            const simulatedEncryptedPayload = `[E2EE_BLOB]${btoa(text)}`; 
+            
+            log(`Sending payload to Core: ${simulatedEncryptedPayload.substring(0,20)}...`);
+            coreSocket.send(simulatedEncryptedPayload);
+            document.getElementById('msgInput').value = '';
+        });
+    </script>
+</body>
+</html>
