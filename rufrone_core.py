@@ -9,6 +9,7 @@ import socket
 TARGET_PACKET_SIZE = 1024  # Layer 4: Constant Size
 HEARTBEAT_INTERVAL = 0.15   # Layer 5: Constant Rate (10 packets per sec)
 UI_PORT = 8080             # Local bridge port
+LOCAL_UDP_PORT = int(os.environ.get("LOCAL_UDP_PORT", 9000)) # Fixed local UDP port
 
 # --- RELAY NODE CONFIGURATION ---
 RELAY_IP = os.environ.get("RELAY_IP", "127.0.0.1")  # Your AWS Server IP (Set via environment variable or .env)
@@ -16,7 +17,12 @@ RELAY_PORT = int(os.environ.get("RELAY_PORT", 51820)) # The WireGuard listening 
 
 # Set up the UDP network socket
 udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+udp_socket.bind(("0.0.0.0", LOCAL_UDP_PORT))
+udp_socket.setblocking(False)
+
 message_queue = asyncio.Queue()
+jitter_buffer = asyncio.Queue()
+connected_uis = set()
 
 # --- LAYER 4: OBFUSCATION ENGINE (PADDING) ---
 def pad_payload(data_bytes):
@@ -52,9 +58,54 @@ async def traffic_shaper_loop():
             
         await asyncio.sleep(HEARTBEAT_INTERVAL)
 
+async def udp_receive_loop():
+    loop = asyncio.get_event_loop()
+    print(f"[UDP IN] Listening for incoming packets on port {LOCAL_UDP_PORT}...")
+    while True:
+        try:
+            data = await loop.sock_recv(udp_socket, 2048)
+            await jitter_buffer.put(data)
+        except (ConnectionResetError, OSError):
+            pass
+        except Exception as e:
+            print(f"[UDP IN] Error receiving: {e}")
+            await asyncio.sleep(1)
+
+async def playback_loop():
+    print("[Core] Playback Loop Started. 100ms de-jitter buffering.")
+    # Optional enhancement: initial delay to absorb latency spikes
+    while True:
+        if jitter_buffer.qsize() >= 3:
+            break
+        await asyncio.sleep(0.1)
+    
+    while True:
+        if not jitter_buffer.empty():
+            packet = await jitter_buffer.get()
+            try:
+                # Attempt to find and parse the valid JSON string, ignoring trailing padding
+                raw_str = packet.decode('utf-8', errors='ignore')
+                decoder = json.JSONDecoder()
+                start_idx = raw_str.find('{')
+                if start_idx != -1:
+                    obj, end_idx = decoder.raw_decode(raw_str[start_idx:])
+                    valid_json_str = raw_str[start_idx:start_idx+end_idx]
+                    
+                    # Push to all connected UIs
+                    for ws in list(connected_uis):
+                        try:
+                            await ws.send(valid_json_str)
+                        except websockets.exceptions.ConnectionClosed:
+                            pass
+            except Exception:
+                pass # Ignore parsing errors from dummy packets or corrupted noise
+                
+        await asyncio.sleep(0.1)
+
 # --- LOCAL BRIDGE: WEBSOCKET SERVER ---
 async def handle_ui_connection(websocket):
     print("\n[Bridge] ✅ Web UI Connected successfully!")
+    connected_uis.add(websocket)
     try:
         async for message in websocket:
             print(f"[Bridge] Received Encrypted Payload from UI: {message}")
@@ -62,6 +113,8 @@ async def handle_ui_connection(websocket):
             await websocket.send(json.dumps({"status": "queued"}))
     except websockets.exceptions.ConnectionClosed:
         print("\n[Bridge] ❌ Web UI Disconnected.")
+    finally:
+        connected_uis.discard(websocket)
 
 # --- MAIN RUNNER ---
 async def main():
@@ -70,8 +123,12 @@ async def main():
     print("========================================")
     server = await websockets.serve(handle_ui_connection, "localhost", UI_PORT)
     print(f"[Setup] Listening for Web UI on ws://localhost:{UI_PORT}")
+    
     shaper_task = asyncio.create_task(traffic_shaper_loop())
-    await asyncio.gather(server.wait_closed(), shaper_task)
+    receive_task = asyncio.create_task(udp_receive_loop())
+    playback_task = asyncio.create_task(playback_loop())
+    
+    await asyncio.gather(server.wait_closed(), shaper_task, receive_task, playback_task)
 
 if __name__ == "__main__":
     try:

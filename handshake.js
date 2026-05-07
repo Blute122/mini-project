@@ -5,13 +5,18 @@ export class HandshakeManager {
     /**
      * @param {WebSocket} websocket The active WebSocket connection to the local Daemon
      * @param {Function} onMessageDecrypted Callback fired when a decrypted message is ready for the UI
+     * @param {Function} onHandshakeEstablished Callback fired when the handshake is complete
      */
-    constructor(websocket, onMessageDecrypted) {
+    constructor(websocket, onMessageDecrypted, onHandshakeEstablished) {
         this.ws = websocket;
         this.onMessageDecrypted = onMessageDecrypted;
+        this.onHandshakeEstablished = onHandshakeEstablished;
         this.ratchet = new DoubleRatchet();
         this.state = 'IDLE'; // IDLE, WAITING_FOR_ACCEPT, ESTABLISHED
         this.tempKeyPair = null; // Holds temporary P-384 keys during the handshake
+        this.ourRawPubKey = null;
+        this.theirRawPubKey = null;
+        this.isInitiator = false;
         
         // Attach listener to WebSocket
         this.ws.addEventListener('message', async (event) => {
@@ -33,6 +38,7 @@ export class HandshakeManager {
         
         console.log("[Handshake] Initiating Handshake... Generating temporary keys.");
         this.state = 'WAITING_FOR_ACCEPT';
+        this.isInitiator = true;
         this.tempKeyPair = await this._generateTempKeys();
         
         const rawPubKey = await window.crypto.subtle.exportKey("raw", this.tempKeyPair.publicKey);
@@ -101,6 +107,11 @@ export class HandshakeManager {
         const sharedSecret = await this._deriveSecret(this.tempKeyPair.privateKey, theirImportedKey);
 
         const ourRawPubKey = await window.crypto.subtle.exportKey("raw", this.tempKeyPair.publicKey);
+        
+        this.theirRawPubKey = theirRawPubKey;
+        this.ourRawPubKey = ourRawPubKey;
+        this.isInitiator = false;
+
         const acceptPacket = {
             type: "HANDSHAKE_ACCEPT",
             payload: {
@@ -114,6 +125,10 @@ export class HandshakeManager {
         this.state = 'ESTABLISHED';
         this.tempKeyPair = null; // clear temporary keys from memory
         console.log("[Handshake] Complete (Receiver Role). Double Ratchet is armed and ready.");
+
+        if (this.onHandshakeEstablished) {
+            this.onHandshakeEstablished();
+        }
     }
 
     async _handleAccept(payload) {
@@ -122,11 +137,19 @@ export class HandshakeManager {
 
         const sharedSecret = await this._deriveSecret(this.tempKeyPair.privateKey, theirImportedKey);
 
+        const ourRawPubKey = await window.crypto.subtle.exportKey("raw", this.tempKeyPair.publicKey);
+        this.ourRawPubKey = ourRawPubKey;
+        this.theirRawPubKey = theirRawPubKey;
+
         // Bootstrap the Ratchet
         await this.ratchet.initializeSession(sharedSecret, this.tempKeyPair, theirImportedKey, true);
         this.state = 'ESTABLISHED';
         this.tempKeyPair = null; // clear temporary keys from memory
         console.log("[Handshake] Complete (Initiator Role). Double Ratchet is armed and ready.");
+
+        if (this.onHandshakeEstablished) {
+            this.onHandshakeEstablished();
+        }
     }
 
     async _handleEncryptedMessage(payload) {
@@ -135,6 +158,41 @@ export class HandshakeManager {
         const ciphertext = this._base64ToBuffer(payload.ciphertextBase64);
         
         return await this.ratchet.decryptMessage(ciphertext, iv, theirDhPubKeyRaw);
+    }
+
+    /**
+     * Generates an Out-of-Band Safety Number by hashing the combined public keys.
+     * @returns {Promise<string>} The chunked safety number.
+     */
+    async generateSafetyNumber() {
+        if (this.state !== 'ESTABLISHED') return null;
+
+        // Ensure determinism: Initiator first, then Responder
+        const initiatorKey = this.isInitiator ? this.ourRawPubKey : this.theirRawPubKey;
+        const responderKey = this.isInitiator ? this.theirRawPubKey : this.ourRawPubKey;
+
+        // Concatenate keys
+        const combined = new Uint8Array(initiatorKey.byteLength + responderKey.byteLength);
+        combined.set(new Uint8Array(initiatorKey), 0);
+        combined.set(new Uint8Array(responderKey), initiatorKey.byteLength);
+
+        // SHA-256 Hash
+        const hashBuffer = await window.crypto.subtle.digest('SHA-256', combined);
+        const hashArray = new Uint8Array(hashBuffer);
+
+        // Convert hash to a numeric string
+        const hex = Array.from(hashArray).map(b => b.toString(16).padStart(2, '0')).join('');
+        let numStr = BigInt('0x' + hex).toString(10);
+
+        // Pad to ensure at least 30 digits, then substring
+        numStr = numStr.padStart(30, '0').substring(0, 30);
+
+        // Chunk into groups of 5
+        const chunks = [];
+        for (let i = 0; i < numStr.length; i += 5) {
+            chunks.push(numStr.substring(i, i + 5));
+        }
+        return chunks.join(' ');
     }
 
     // --- Cryptographic Primitives ---

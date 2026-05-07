@@ -34,6 +34,7 @@
         <h3>2. Local Daemon Connection</h3>
         <p><span id="connStatus" class="status-dot"></span><span id="connText">Disconnected from Core</span></p>
         <button id="handshakeBtn" class="primary-btn" disabled>Initiate Peer Handshake</button>
+        <div id="safetyNumberDisplay" style="margin-top: 10px; font-weight: bold; color: var(--accent); display: none;"></div>
     </div>
 
     <div class="panel">
@@ -97,6 +98,17 @@
 
                 handshakeManager = new HandshakeManager(coreSocket, (plaintext) => {
                     log("🔓 [Decrypted MSG]: " + plaintext);
+                }, async () => {
+                    const safetyNum = await handshakeManager.generateSafetyNumber();
+                    if (safetyNum) {
+                        const display = document.getElementById('safetyNumberDisplay');
+                        display.innerText = "Safety Number: " + safetyNum;
+                        display.style.display = 'block';
+                        log("Handshake ESTABLISHED. Safety Number: " + safetyNum);
+                        
+                        document.getElementById('msgInput').disabled = false;
+                        document.getElementById('sendBtn').disabled = false;
+                    }
                 });
             };
 
@@ -122,8 +134,6 @@
             log("Initiating in-band Double Ratchet handshake...");
             try {
                 await handshakeManager.initiateHandshake();
-                document.getElementById('msgInput').disabled = false;
-                document.getElementById('sendBtn').disabled = false;
             } catch (e) {
                 log("Handshake Error: " + e.message);
             }
