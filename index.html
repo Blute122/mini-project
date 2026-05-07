@@ -1,47 +1,161 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Rufrone Client - Phase 2</title>
+    <title>Rufrone Client - Phase 6</title>
     <style>
-        :root { --bg: #0d1117; --text: #c9d1d9; --accent: #58a6ff; --border: #30363d; --success: #238636;}
-        body { font-family: 'Courier New', Courier, monospace; background-color: var(--bg); color: var(--text); padding: 20px; max-width: 600px; margin: 0 auto; }
-        h2 { border-bottom: 1px solid var(--border); padding-bottom: 10px; }
-        .panel { border: 1px solid var(--border); padding: 15px; margin-bottom: 20px; border-radius: 6px; background-color: #161b22; }
-        button { background-color: var(--border); color: var(--text); border: 1px solid #8b949e; padding: 8px 16px; cursor: pointer; font-family: inherit; margin-top: 10px; border-radius: 4px; transition: 0.2s;}
-        button:hover { background-color: #8b949e; color: #000; }
-        .primary-btn { background-color: var(--success); color: white; border: none; }
-        .primary-btn:hover { background-color: #2ea043; color: white; }
-        input[type="text"] { width: calc(100% - 22px); padding: 10px; background-color: var(--bg); color: var(--text); border: 1px solid var(--border); margin-bottom: 10px; }
-        #logArea { height: 150px; overflow-y: auto; font-size: 0.85em; color: #8b949e; border-top: 1px dashed var(--border); padding-top: 10px; margin-top: 10px; }
-        .status-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background-color: red; margin-right: 5px; }
-        .connected { background-color: var(--success); }
+        :root {
+            --bg: #0d1117;
+            --text: #c9d1d9;
+            --accent: #58a6ff;
+            --border: #30363d;
+            --success: #238636;
+        }
+
+        body {
+            font-family: 'Courier New', Courier, monospace;
+            background-color: var(--bg);
+            color: var(--text);
+            padding: 20px;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        h2 {
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 10px;
+        }
+
+        .panel {
+            border: 1px solid var(--border);
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 6px;
+            background-color: #161b22;
+        }
+
+        button {
+            background-color: var(--border);
+            color: var(--text);
+            border: 1px solid #8b949e;
+            padding: 8px 16px;
+            cursor: pointer;
+            font-family: inherit;
+            margin-top: 10px;
+            border-radius: 4px;
+            transition: 0.2s;
+        }
+
+        button:hover {
+            background-color: #8b949e;
+            color: #000;
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .primary-btn {
+            background-color: var(--success);
+            color: white;
+            border: none;
+        }
+
+        .primary-btn:hover {
+            background-color: #2ea043;
+            color: white;
+        }
+
+        input[type="text"] {
+            width: calc(100% - 22px);
+            padding: 10px;
+            background-color: var(--bg);
+            color: var(--text);
+            border: 1px solid var(--border);
+            margin-bottom: 10px;
+        }
+
+        input[type="file"] {
+            margin-top: 10px;
+            font-family: inherit;
+        }
+
+        #logArea {
+            height: 250px;
+            overflow-y: auto;
+            font-size: 0.85em;
+            color: #8b949e;
+            border-top: 1px dashed var(--border);
+            padding-top: 10px;
+            margin-top: 10px;
+        }
+
+        .status-dot {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background-color: red;
+            margin-right: 5px;
+        }
+
+        .connected {
+            background-color: var(--success);
+        }
+
+        .download-link {
+            display: inline-block;
+            background-color: #1f6feb;
+            color: white;
+            padding: 5px 10px;
+            text-decoration: none;
+            border-radius: 4px;
+            margin: 10px 0;
+            font-weight: bold;
+        }
+
+        .download-link:hover {
+            background-color: #388bfd;
+        }
     </style>
 </head>
+
 <body>
 
-    <h2>🛡️ Rufrone Client (Split Architecture)</h2>
+    <h2>🛡️ Rufrone Client (Phase 6)</h2>
 
     <div class="panel">
         <h3>1. Self-Sovereign Identity (SSI)</h3>
-        <p style="font-size: 0.9em;">Generates Ed25519 cryptographic keys locally. No server involved.</p>
         <button id="genKeyBtn">Generate Local Identity (DID)</button>
-        <div id="didDisplay" style="margin-top: 10px; font-size: 0.8em; word-break: break-all; color: var(--accent);"></div>
+        <div id="didDisplay" style="margin-top: 10px; font-size: 0.8em; word-break: break-all; color: var(--accent);">
+        </div>
     </div>
 
     <div class="panel">
         <h3>2. Local Daemon Connection</h3>
         <p><span id="connStatus" class="status-dot"></span><span id="connText">Disconnected from Core</span></p>
         <button id="handshakeBtn" class="primary-btn" disabled>Initiate Peer Handshake</button>
-        <div id="safetyNumberDisplay" style="margin-top: 10px; font-weight: bold; color: var(--accent); display: none;"></div>
+        <div id="safetyNumberDisplay" style="margin-top: 10px; font-weight: bold; color: var(--accent); display: none;">
+        </div>
     </div>
 
     <div class="panel">
-        <h3>3. Secure Transmission</h3>
+        <h3>3. Secure Transmission (Chat)</h3>
         <input type="text" id="msgInput" placeholder="Type a message to send through WireGuard..." disabled>
         <button id="sendBtn" class="primary-btn" disabled>Send Encrypted Payload</button>
-        
+    </div>
+
+    <div class="panel">
+        <h3>4. Bulk File Transfer (QoS Throttled)</h3>
+        <input type="file" id="filePicker" disabled />
+        <br>
+        <button id="sendFileBtn" class="primary-btn" disabled>Send Encrypted File</button>
+    </div>
+
+    <div class="panel">
         <div id="logArea">
             <div>System initialized. Waiting for Identity...</div>
         </div>
@@ -50,44 +164,35 @@
     <script type="module">
         import { HandshakeManager } from './handshake.js';
 
-        let localKeyPair = null;
         let coreSocket = null;
         let handshakeManager = null;
+
+        let incomingFile = null;
+        let receivedBytes = 0;
+        let fileChunks = [];
 
         const log = (msg) => {
             const time = new Date().toLocaleTimeString();
             const logArea = document.getElementById('logArea');
-            logArea.innerHTML += `<div>[${time}] ${msg}</div>`; // Append to bottom
+            logArea.innerHTML += `<div>[${time}] ${msg}</div>`;
             logArea.scrollTop = logArea.scrollHeight;
         };
 
-        // --- STEP 1: Generate Self-Sovereign Identity (SSI) ---
         document.getElementById('genKeyBtn').addEventListener('click', async () => {
             log("Generating Ed25519 keys via WebCrypto API...");
             try {
-                // Using WebCrypto native Ed25519 for secure digital signatures/identity
-                localKeyPair = await window.crypto.subtle.generateKey(
-                    { name: "Ed25519" }, true, ["sign", "verify"]
-                );
-                
-                // Export Public Key to display as the "DID" (Decentralized Identifier)
+                let localKeyPair = await window.crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
                 const exportedPubKey = await window.crypto.subtle.exportKey("spki", localKeyPair.publicKey);
                 const pubKeyBase64 = btoa(String.fromCharCode(...new Uint8Array(exportedPubKey)));
-                
                 document.getElementById('didDisplay').innerText = "Your DID: did:key:" + pubKeyBase64.substring(0, 32) + "...";
-                log("Identity generated successfully! Private key secured in browser sandbox.");
-                
-                // Now that we have an identity, connect to the Python Daemon
+                log("Identity generated successfully!");
                 connectToDaemon();
             } catch (e) {
-                log("Error generating keys. Note: Ed25519 requires a modern browser context.");
-                console.error(e);
+                log("Error generating keys.");
             }
         });
 
-        // --- STEP 2: Connect to Python Core ---
         function connectToDaemon() {
-            log("Attempting to connect to local Rufrone Core on port 8080...");
             coreSocket = new WebSocket('ws://localhost:8080');
 
             coreSocket.onopen = () => {
@@ -96,63 +201,155 @@
                 document.getElementById('handshakeBtn').disabled = false;
                 log("WebSocket bridge established.");
 
-                handshakeManager = new HandshakeManager(coreSocket, (plaintext) => {
-                    log("🔓 [Decrypted MSG]: " + plaintext);
-                }, async () => {
-                    const safetyNum = await handshakeManager.generateSafetyNumber();
-                    if (safetyNum) {
-                        const display = document.getElementById('safetyNumberDisplay');
-                        display.innerText = "Safety Number: " + safetyNum;
-                        display.style.display = 'block';
-                        log("Handshake ESTABLISHED. Safety Number: " + safetyNum);
-                        
-                        document.getElementById('msgInput').disabled = false;
-                        document.getElementById('sendBtn').disabled = false;
-                    }
-                });
+                handshakeManager = new HandshakeManager(coreSocket,
+                    (plaintext) => {
+                        if (plaintext.startsWith("[FILE_META]:::")) {
+                            const meta = JSON.parse(plaintext.split(":::")[1]);
+                            incomingFile = meta;
+                            receivedBytes = 0;
+                            fileChunks = [];
+                            log(`📂 [Incoming File Alert]: Expecting ${meta.filename} (${Math.round(meta.size / 1024)} KB)...`);
+                        } else {
+                            log("🔓 [Decrypted MSG]: " + plaintext);
+                        }
+                    },
+                    async () => {
+                        const safetyNum = await handshakeManager.generateSafetyNumber();
+                        if (safetyNum) {
+                            const display = document.getElementById('safetyNumberDisplay');
+                            display.innerText = "Safety Number: " + safetyNum;
+                            display.style.display = 'block';
+                            document.getElementById('msgInput').disabled = false;
+                            document.getElementById('sendBtn').disabled = false;
+                            document.getElementById('filePicker').disabled = false;
+                            document.getElementById('sendFileBtn').disabled = false;
+                        }
+                    },
+                    async (buffer) => {
+                        if (!incomingFile) return;
+
+                        fileChunks.push(new Uint8Array(buffer));
+                        receivedBytes += buffer.byteLength;
+
+                        // LIVE UI PROGRESS TRACKER
+                        let percent = Math.min(100, Math.round((receivedBytes / incomingFile.size) * 100));
+                        let progressEl = document.getElementById('fileProgress');
+                        if (!progressEl) {
+                            progressEl = document.createElement('div');
+                            progressEl.id = 'fileProgress';
+                            progressEl.style.color = 'var(--accent)';
+                            document.getElementById('logArea').appendChild(progressEl);
+                        }
+                        progressEl.innerText = `📥 Receiving File: ${percent}% (${receivedBytes} / ${incomingFile.size} bytes)`;
+
+                        if (receivedBytes >= incomingFile.size) {
+                            progressEl.innerText = `✅ Transfer complete! Decrypting ${incomingFile.filename}...`;
+                            progressEl.id = ''; // clear ID for the next file transfer
+                            await decryptAndProvideDownload();
+                        }
+                    });
             };
 
-            coreSocket.onmessage = (event) => {
-                const data = JSON.parse(event.data);
-                if (data.status === "queued") {
-                    log("Core acknowledged payload. Passing to Obfuscation Engine.");
-                }
-            };
-
-            coreSocket.onclose = () => {
-                document.getElementById('connStatus').classList.remove('connected');
-                document.getElementById('connText').innerText = "Disconnected from Core";
-                document.getElementById('msgInput').disabled = true;
-                document.getElementById('sendBtn').disabled = true;
-                log("Connection lost. Make sure Python daemon is running.");
-            };
+            coreSocket.onclose = () => { log("Connection lost."); };
         }
 
-        // --- STEP 2.5: Initiate Handshake ---
+        async function decryptAndProvideDownload() {
+            const fullBuffer = new Uint8Array(incomingFile.size);
+            let offset = 0;
+            for (let chunk of fileChunks) {
+                fullBuffer.set(chunk, offset);
+                offset += chunk.byteLength;
+            }
+
+            const iv = fullBuffer.slice(0, 12);
+            const ciphertext = fullBuffer.slice(12);
+
+            try {
+                const rawKey = Uint8Array.from(atob(incomingFile.file_key), c => c.charCodeAt(0));
+                const cryptoKey = await window.crypto.subtle.importKey("raw", rawKey, { name: "AES-GCM", length: 256 }, false, ["decrypt"]);
+
+                const decryptedBuffer = await window.crypto.subtle.decrypt({ name: "AES-GCM", iv: iv }, cryptoKey, ciphertext);
+
+                const blob = new Blob([decryptedBuffer]);
+                const url = URL.createObjectURL(blob);
+
+                const logArea = document.getElementById('logArea');
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = incomingFile.filename;
+                a.textContent = `⬇️ Save Decrypted File: ${incomingFile.filename}`;
+                a.className = "download-link";
+
+                logArea.appendChild(document.createElement('br'));
+                logArea.appendChild(a);
+                logArea.appendChild(document.createElement('br'));
+
+                log(`✅ Decryption successful. File is ready.`);
+            } catch (e) {
+                log(`❌ File Decryption failed.`);
+            }
+
+            incomingFile = null;
+            receivedBytes = 0;
+            fileChunks = [];
+        }
+
         document.getElementById('handshakeBtn').addEventListener('click', async () => {
             if (!handshakeManager) return;
-            log("Initiating in-band Double Ratchet handshake...");
-            try {
-                await handshakeManager.initiateHandshake();
-            } catch (e) {
-                log("Handshake Error: " + e.message);
-            }
+            try { await handshakeManager.initiateHandshake(); } catch (e) { log("Error: " + e.message); }
         });
 
-        // --- STEP 3: Send Payload ---
         document.getElementById('sendBtn').addEventListener('click', async () => {
             const text = document.getElementById('msgInput').value;
-            if (!text) return;
-            
-            if (!handshakeManager || handshakeManager.state !== 'ESTABLISHED') {
-                log("❌ Cannot send: Double Ratchet handshake not established.");
-                return;
-            }
-
-            log(`Encrypting payload via Double Ratchet...`);
+            if (!text || !handshakeManager || handshakeManager.state !== 'ESTABLISHED') return;
             await handshakeManager.sendEncryptedMessage(text);
             document.getElementById('msgInput').value = '';
         });
+
+        document.getElementById('sendFileBtn').addEventListener('click', async () => {
+            const file = document.getElementById('filePicker').files[0];
+            if (!file || !handshakeManager || handshakeManager.state !== 'ESTABLISHED') return;
+
+            log(`[File] Preparing ${file.name} for encrypted transfer...`);
+
+            const fileKey = await window.crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"]);
+            const exportedKey = await window.crypto.subtle.exportKey("raw", fileKey);
+            const base64Key = btoa(String.fromCharCode(...new Uint8Array(exportedKey)));
+
+            const arrayBuffer = await file.arrayBuffer();
+            const iv = window.crypto.getRandomValues(new Uint8Array(12));
+            const ciphertext = await window.crypto.subtle.encrypt({ name: "AES-GCM", iv: iv }, fileKey, arrayBuffer);
+
+            const finalBuffer = new Uint8Array(iv.length + ciphertext.byteLength);
+            finalBuffer.set(iv, 0);
+            finalBuffer.set(new Uint8Array(ciphertext), iv.length);
+
+            const metaMessage = {
+                type: "FILE_TRANSFER_INIT",
+                filename: file.name,
+                size: finalBuffer.length,
+                file_key: base64Key
+            };
+
+            const outerPacket = {
+                type: "FILE_TRANSFER_INIT",
+                senderId: handshakeManager.clientId,
+                payload: metaMessage
+            };
+            coreSocket.send(JSON.stringify(outerPacket));
+
+            const formData = new FormData();
+            formData.append('file', new Blob([finalBuffer]), file.name);
+
+            log("[File] Handing encrypted binary to Python Daemon (Port 8081)...");
+            try {
+                await fetch('http://localhost:8081/upload', { method: 'POST', body: formData });
+                log("[File] Daemon accepted the file and is throttling transmission.");
+            } catch (err) {
+                log("❌ Error uploading to daemon. Is aiohttp running?");
+            }
+        });
     </script>
 </body>
+
 </html>
