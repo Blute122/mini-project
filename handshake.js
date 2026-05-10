@@ -18,16 +18,12 @@ export class HandshakeManager {
 
         this.ws.addEventListener('message', async (event) => {
             try {
-                // BUG FIX: Catch both ArrayBuffers and Blobs
                 if (event.data instanceof ArrayBuffer || event.data instanceof Blob) {
                     let buffer = event.data;
-                    if (event.data instanceof Blob) {
-                        buffer = await event.data.arrayBuffer();
-                    }
+                    if (event.data instanceof Blob) buffer = await event.data.arrayBuffer();
                     if (this.onBinaryReceived) this.onBinaryReceived(buffer);
                     return;
                 }
-
                 if (typeof event.data !== 'string' || !event.data.startsWith('{')) return;
                 await this.handleIncomingMessage(event.data);
             } catch (e) {
@@ -42,16 +38,28 @@ export class HandshakeManager {
         this.isInitiator = true;
         this.tempKeyPair = await this._generateTempKeys();
         const rawPubKey = await window.crypto.subtle.exportKey("raw", this.tempKeyPair.publicKey);
-        const offerPacket = { type: "HANDSHAKE_OFFER", senderId: this.clientId, payload: { pubKeyBase64: this._bufferToBase64(rawPubKey) } };
+        const offerPacket = {
+            type: "HANDSHAKE_OFFER",
+            senderId: this.clientId,
+            payload: { pubKeyBase64: this._bufferToBase64(rawPubKey) }
+        };
         this.ws.send(JSON.stringify(offerPacket));
     }
 
+    // Encrypts any plaintext string through the Double Ratchet and sends it
+    // as a MESSAGE packet.  Used for both chat messages and file metadata —
+    // the receiver decrypts and routes based on the plaintext content prefix.
     async sendEncryptedMessage(plaintext) {
         if (this.state !== 'ESTABLISHED') throw new Error("Not established.");
         const { header, ciphertext } = await this.ratchet.encryptMessage(plaintext);
         const messagePacket = {
-            type: "MESSAGE", senderId: this.clientId,
-            payload: { dhPubKeyBase64: this._bufferToBase64(header.dhPubKey), ivBase64: this._bufferToBase64(header.iv), ciphertextBase64: this._bufferToBase64(ciphertext) }
+            type: "MESSAGE",
+            senderId: this.clientId,
+            payload: {
+                dhPubKeyBase64: this._bufferToBase64(header.dhPubKey),
+                ivBase64: this._bufferToBase64(header.iv),
+                ciphertextBase64: this._bufferToBase64(ciphertext)
+            }
         };
         this.ws.send(JSON.stringify(messagePacket));
     }
@@ -65,11 +73,19 @@ export class HandshakeManager {
         } else if (packet.type === "HANDSHAKE_ACCEPT" && this.state === 'WAITING_FOR_ACCEPT') {
             await this._handleAccept(packet.payload);
         } else if (packet.type === "MESSAGE" && this.state === 'ESTABLISHED') {
+            // All application messages — chat AND file metadata — are now
+            // Double-Ratchet encrypted MESSAGE packets.  The plaintext content
+            // determines routing: the [FILE_META]::: prefix is checked in
+            // index.html's onMessageDecrypted callback, not here.
+            // The old FILE_TRANSFER_INIT special case has been removed because
+            // it bypassed encryption entirely — filename, size, and the AES-GCM
+            // file key were all visible in plaintext to anyone reading the
+            // WebSocket stream.
             const plaintext = await this._handleEncryptedMessage(packet.payload);
             if (this.onMessageDecrypted) this.onMessageDecrypted(plaintext);
-        } else if (packet.type === "FILE_TRANSFER_INIT" && this.state === 'ESTABLISHED') {
-            if (this.onMessageDecrypted) this.onMessageDecrypted(`[FILE_META]:::${JSON.stringify(packet.payload)}`);
         }
+        // FILE_TRANSFER_INIT case intentionally removed — file metadata now
+        // travels as an encrypted MESSAGE (see sendFileMetaEncrypted in index.html)
     }
 
     async _handleOffer(payload) {
@@ -81,7 +97,11 @@ export class HandshakeManager {
         this.theirRawPubKey = theirRawPubKey;
         this.ourRawPubKey = ourRawPubKey;
         this.isInitiator = false;
-        const acceptPacket = { type: "HANDSHAKE_ACCEPT", senderId: this.clientId, payload: { pubKeyBase64: this._bufferToBase64(ourRawPubKey) } };
+        const acceptPacket = {
+            type: "HANDSHAKE_ACCEPT",
+            senderId: this.clientId,
+            payload: { pubKeyBase64: this._bufferToBase64(ourRawPubKey) }
+        };
         this.ws.send(JSON.stringify(acceptPacket));
         await this.ratchet.initializeSession(sharedSecret, this.tempKeyPair, theirImportedKey, false);
         this.state = 'ESTABLISHED';
@@ -125,9 +145,15 @@ export class HandshakeManager {
         return chunks.join(' ');
     }
 
-    async _generateTempKeys() { return await window.crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-384" }, true, ["deriveBits"]); }
-    async _importPubKey(rawBuffer) { return await window.crypto.subtle.importKey("raw", rawBuffer, { name: "ECDH", namedCurve: "P-384" }, true, []); }
-    async _deriveSecret(privateKey, publicKey) { return await window.crypto.subtle.deriveBits({ name: "ECDH", public: publicKey }, privateKey, 384); }
+    async _generateTempKeys() {
+        return await window.crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-384" }, true, ["deriveBits"]);
+    }
+    async _importPubKey(rawBuffer) {
+        return await window.crypto.subtle.importKey("raw", rawBuffer, { name: "ECDH", namedCurve: "P-384" }, true, []);
+    }
+    async _deriveSecret(privateKey, publicKey) {
+        return await window.crypto.subtle.deriveBits({ name: "ECDH", public: publicKey }, privateKey, 384);
+    }
     _bufferToBase64(buffer) {
         const bytes = new Uint8Array(buffer);
         let binary = '';

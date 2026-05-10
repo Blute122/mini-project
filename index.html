@@ -15,8 +15,8 @@
         }
 
         body {
-            font-family: 'Courier New', Courier, monospace;
-            background-color: var(--bg);
+            font-family: 'Courier New', monospace;
+            background: var(--bg);
             color: var(--text);
             padding: 20px;
             max-width: 600px;
@@ -33,11 +33,11 @@
             padding: 15px;
             margin-bottom: 20px;
             border-radius: 6px;
-            background-color: #161b22;
+            background: #161b22;
         }
 
         button {
-            background-color: var(--border);
+            background: var(--border);
             color: var(--text);
             border: 1px solid #8b949e;
             padding: 8px 16px;
@@ -45,40 +45,39 @@
             font-family: inherit;
             margin-top: 10px;
             border-radius: 4px;
-            transition: 0.2s;
+            transition: .2s;
         }
 
         button:hover {
-            background-color: #8b949e;
+            background: #8b949e;
             color: #000;
         }
 
         button:disabled {
-            opacity: 0.5;
+            opacity: .5;
             cursor: not-allowed;
         }
 
         .primary-btn {
-            background-color: var(--success);
-            color: white;
+            background: var(--success);
+            color: #fff;
             border: none;
         }
 
         .primary-btn:hover {
-            background-color: #2ea043;
-            color: white;
+            background: #2ea043;
         }
 
-        input[type="text"] {
+        input[type=text] {
             width: calc(100% - 22px);
             padding: 10px;
-            background-color: var(--bg);
+            background: var(--bg);
             color: var(--text);
             border: 1px solid var(--border);
             margin-bottom: 10px;
         }
 
-        input[type="file"] {
+        input[type=file] {
             margin-top: 10px;
             font-family: inherit;
         }
@@ -86,7 +85,7 @@
         #logArea {
             height: 250px;
             overflow-y: auto;
-            font-size: 0.85em;
+            font-size: .85em;
             color: #8b949e;
             border-top: 1px dashed var(--border);
             padding-top: 10px;
@@ -98,18 +97,18 @@
             width: 10px;
             height: 10px;
             border-radius: 50%;
-            background-color: red;
+            background: red;
             margin-right: 5px;
         }
 
         .connected {
-            background-color: var(--success);
+            background: var(--success);
         }
 
         .download-link {
             display: inline-block;
-            background-color: #1f6feb;
-            color: white;
+            background: #1f6feb;
+            color: #fff;
             padding: 5px 10px;
             text-decoration: none;
             border-radius: 4px;
@@ -118,28 +117,25 @@
         }
 
         .download-link:hover {
-            background-color: #388bfd;
+            background: #388bfd;
         }
     </style>
 </head>
 
 <body>
-
     <h2>🛡️ Rufrone Client (Phase 6)</h2>
 
     <div class="panel">
         <h3>1. Self-Sovereign Identity (SSI)</h3>
         <button id="genKeyBtn">Generate Local Identity (DID)</button>
-        <div id="didDisplay" style="margin-top: 10px; font-size: 0.8em; word-break: break-all; color: var(--accent);">
-        </div>
+        <div id="didDisplay" style="margin-top:10px;font-size:.8em;word-break:break-all;color:var(--accent)"></div>
     </div>
 
     <div class="panel">
         <h3>2. Local Daemon Connection</h3>
         <p><span id="connStatus" class="status-dot"></span><span id="connText">Disconnected from Core</span></p>
         <button id="handshakeBtn" class="primary-btn" disabled>Initiate Peer Handshake</button>
-        <div id="safetyNumberDisplay" style="margin-top: 10px; font-weight: bold; color: var(--accent); display: none;">
-        </div>
+        <div id="safetyNumberDisplay" style="margin-top:10px;font-weight:bold;color:var(--accent);display:none"></div>
     </div>
 
     <div class="panel">
@@ -150,7 +146,7 @@
 
     <div class="panel">
         <h3>4. Bulk File Transfer (QoS Throttled)</h3>
-        <input type="file" id="filePicker" disabled />
+        <input type="file" id="filePicker" disabled>
         <br>
         <button id="sendFileBtn" class="primary-btn" disabled>Send Encrypted File</button>
     </div>
@@ -167,29 +163,84 @@
         let coreSocket = null;
         let handshakeManager = null;
 
-        let incomingFile = null;
-        let receivedBytes = 0;
-        let fileChunks = [];
+        // ── Receive state ─────────────────────────────────────────────────────────
+        // rx holds everything about the currently incoming file transfer.
+        // It is replaced wholesale on each new FILE_META — no partial resets,
+        // no shared mutable flags, no cross-transfer bleed.
+        //
+        //   rx = { meta, chunks: Uint8Array[], receivedBytes: number, done: boolean }
+        //
+        // "done" is set synchronously before any await so no concurrent path can
+        // double-trigger finalize().
+        let rx = null;
 
-        const log = (msg) => {
-            const time = new Date().toLocaleTimeString();
-            const logArea = document.getElementById('logArea');
-            logArea.innerHTML += `<div>[${time}] ${msg}</div>`;
-            logArea.scrollTop = logArea.scrollHeight;
+        const log = msg => {
+            const t = new Date().toLocaleTimeString();
+            const la = document.getElementById('logArea');
+            la.innerHTML += `<div>[${t}] ${msg}</div>`;
+            la.scrollTop = la.scrollHeight;
         };
 
-        document.getElementById('genKeyBtn').addEventListener('click', async () => {
-            log("Generating Ed25519 keys via WebCrypto API...");
-            try {
-                let localKeyPair = await window.crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
-                const exportedPubKey = await window.crypto.subtle.exportKey("spki", localKeyPair.publicKey);
-                const pubKeyBase64 = btoa(String.fromCharCode(...new Uint8Array(exportedPubKey)));
-                document.getElementById('didDisplay').innerText = "Your DID: did:key:" + pubKeyBase64.substring(0, 32) + "...";
-                log("Identity generated successfully!");
-                connectToDaemon();
-            } catch (e) {
-                log("Error generating keys.");
+        // ── Decrypt and offer download ────────────────────────────────────────────
+        // Called exactly once per transfer, by whichever path (byte-count or EOF)
+        // fires first.  "state" is a snapshot of rx taken before rx was cleared.
+        async function finalize(state) {
+            const { meta, chunks, receivedBytes } = state;
+
+            const prog = document.getElementById('fileProgress');
+            if (prog) { prog.innerText = `✅ Transfer complete! Decrypting ${meta.filename}...`; prog.id = ''; }
+
+            // Reconstruct — clamp to declared size in case last chunk was 1 byte over
+            const size = Math.min(receivedBytes, meta.size);
+            const fullBuffer = new Uint8Array(size);
+            let offset = 0;
+            for (const chunk of chunks) {
+                const space = fullBuffer.length - offset;
+                if (space <= 0) break;
+                const slice = chunk.subarray(0, Math.min(chunk.length, space));
+                fullBuffer.set(slice, offset);
+                offset += slice.length;
             }
+
+            // Wire layout: [12-byte AES-GCM IV][ciphertext]
+            const iv = fullBuffer.slice(0, 12);
+            const ciphertext = fullBuffer.slice(12);
+
+            try {
+                const rawKey = Uint8Array.from(atob(meta.file_key), c => c.charCodeAt(0));
+                const cryptoKey = await crypto.subtle.importKey(
+                    'raw', rawKey, { name: 'AES-GCM', length: 256 }, false, ['decrypt']
+                );
+                const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, cryptoKey, ciphertext);
+
+                const url = URL.createObjectURL(new Blob([decrypted]));
+                const a = Object.assign(document.createElement('a'), {
+                    href: url, download: meta.filename,
+                    textContent: `⬇️ Save Decrypted File: ${meta.filename}`,
+                    className: 'download-link'
+                });
+                const la = document.getElementById('logArea');
+                la.appendChild(document.createElement('br'));
+                la.appendChild(a);
+                la.appendChild(document.createElement('br'));
+                log('✅ Decryption successful. File is ready.');
+            } catch (e) {
+                log(`❌ File Decryption failed: ${e.message}`);
+            }
+        }
+
+        // ── Identity + connect ────────────────────────────────────────────────────
+
+        document.getElementById('genKeyBtn').addEventListener('click', async () => {
+            log('Generating Ed25519 keys via WebCrypto API...');
+            try {
+                const kp = await crypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']);
+                const spki = await crypto.subtle.exportKey('spki', kp.publicKey);
+                const b64 = btoa(String.fromCharCode(...new Uint8Array(spki)));
+                document.getElementById('didDisplay').innerText = 'Your DID: did:key:' + b64.substring(0, 32) + '...';
+                log('Identity generated successfully!');
+                connectToDaemon();
+            } catch (e) { log('Error generating keys: ' + e.message); }
         });
 
         function connectToDaemon() {
@@ -197,106 +248,108 @@
 
             coreSocket.onopen = () => {
                 document.getElementById('connStatus').classList.add('connected');
-                document.getElementById('connText').innerText = "Connected to Rufrone Core";
+                document.getElementById('connText').innerText = 'Connected to Rufrone Core';
                 document.getElementById('handshakeBtn').disabled = false;
-                log("WebSocket bridge established.");
+                log('WebSocket bridge established.');
 
-                handshakeManager = new HandshakeManager(coreSocket,
+                handshakeManager = new HandshakeManager(
+                    coreSocket,
+
+                    // ── Text / control messages ───────────────────────────────────
+                    // FILE_META arrives here via the HandshakeManager's FILE_TRANSFER_INIT
+                    // path which calls onMessageDecrypted with "[FILE_META]:::..." prefix.
                     (plaintext) => {
-                        if (plaintext.startsWith("[FILE_META]:::")) {
-                            const meta = JSON.parse(plaintext.split(":::")[1]);
-                            incomingFile = meta;
-                            receivedBytes = 0;
-                            fileChunks = [];
-                            log(`📂 [Incoming File Alert]: Expecting ${meta.filename} (${Math.round(meta.size / 1024)} KB)...`);
+                        if (plaintext.startsWith('[FILE_META]:::')) {
+                            const meta = JSON.parse(plaintext.split(':::')[1]);
+
+                            // Replace rx completely — no partial field resets
+                            const old = document.getElementById('fileProgress');
+                            if (old) old.remove();
+                            rx = { meta, chunks: [], receivedBytes: 0, done: false };
+
+                            log(`📂 [Incoming File]: ${meta.filename} — ${Math.round(meta.size / 1024)} KB`);
                         } else {
-                            log("🔓 [Decrypted MSG]: " + plaintext);
+                            log('🔓 [Decrypted MSG]: ' + plaintext);
                         }
                     },
+
+                    // ── Handshake established ─────────────────────────────────────
                     async () => {
-                        const safetyNum = await handshakeManager.generateSafetyNumber();
-                        if (safetyNum) {
-                            const display = document.getElementById('safetyNumberDisplay');
-                            display.innerText = "Safety Number: " + safetyNum;
-                            display.style.display = 'block';
-                            document.getElementById('msgInput').disabled = false;
-                            document.getElementById('sendBtn').disabled = false;
-                            document.getElementById('filePicker').disabled = false;
-                            document.getElementById('sendFileBtn').disabled = false;
+                        const n = await handshakeManager.generateSafetyNumber();
+                        if (n) {
+                            const d = document.getElementById('safetyNumberDisplay');
+                            d.innerText = 'Safety Number: ' + n;
+                            d.style.display = 'block';
+                            ['msgInput', 'sendBtn', 'filePicker', 'sendFileBtn']
+                                .forEach(id => document.getElementById(id).disabled = false);
                         }
                     },
+
+                    // ── Binary chunk handler ──────────────────────────────────────
+                    // Each binary WebSocket frame is one decoded FILE_CHUNK.
+                    // The daemon base64-encoded the raw bytes, sent them through the
+                    // traffic shaper (padded, constant-rate UDP), received them back,
+                    // decoded base64, and delivered them here as raw binary frames.
+                    // So what arrives here is exactly what the sender encrypted.
                     async (buffer) => {
-                        if (!incomingFile) return;
+                        if (!rx || rx.done) return;
 
-                        fileChunks.push(new Uint8Array(buffer));
-                        receivedBytes += buffer.byteLength;
+                        rx.chunks.push(new Uint8Array(buffer));
+                        rx.receivedBytes += buffer.byteLength;
 
-                        // LIVE UI PROGRESS TRACKER
-                        let percent = Math.min(100, Math.round((receivedBytes / incomingFile.size) * 100));
-                        let progressEl = document.getElementById('fileProgress');
-                        if (!progressEl) {
-                            progressEl = document.createElement('div');
-                            progressEl.id = 'fileProgress';
-                            progressEl.style.color = 'var(--accent)';
-                            document.getElementById('logArea').appendChild(progressEl);
+                        const pct = Math.min(100, Math.round((rx.receivedBytes / rx.meta.size) * 100));
+                        let prog = document.getElementById('fileProgress');
+                        if (!prog) {
+                            prog = Object.assign(document.createElement('div'), {
+                                id: 'fileProgress', style: 'color:var(--accent)'
+                            });
+                            document.getElementById('logArea').appendChild(prog);
                         }
-                        progressEl.innerText = `📥 Receiving File: ${percent}% (${receivedBytes} / ${incomingFile.size} bytes)`;
+                        prog.innerText = `📥 Receiving: ${pct}% (${rx.receivedBytes} / ${rx.meta.size} bytes)`;
 
-                        if (receivedBytes >= incomingFile.size) {
-                            progressEl.innerText = `✅ Transfer complete! Decrypting ${incomingFile.filename}...`;
-                            progressEl.id = ''; // clear ID for the next file transfer
-                            await decryptAndProvideDownload();
+                        if (rx.receivedBytes >= rx.meta.size) {
+                            rx.done = true;   // synchronous guard — blocks re-entry
+                            const snap = rx;
+                            rx = null;   // allow next FILE_META immediately
+                            await finalize(snap);
                         }
-                    });
+                    }
+                );
+
+                // ── EOF sentinel ──────────────────────────────────────────────────
+                // The daemon enqueues a FILE_EOF after all chunks.  Because everything
+                // goes through the same traffic_shaper_loop queue, the EOF is guaranteed
+                // to arrive after all chunks — in-order delivery on the same UDP path.
+                // This acts as a reliable fallback for small files where the byte-count
+                // threshold might be satisfied in the same event loop tick as the last
+                // chunk, before the binary handler has been called.
+                coreSocket.addEventListener('message', async (event) => {
+                    if (typeof event.data !== 'string') return;
+                    let pkt;
+                    try { pkt = JSON.parse(event.data); } catch { return; }
+                    if (pkt.type !== 'RUFRONE_FILE_EOF') return;
+
+                    // Guard: only act if this EOF matches the current transfer
+                    if (!rx || rx.done) return;
+                    if (pkt.transfer_id && rx.meta.transfer_id &&
+                        pkt.transfer_id !== rx.meta.transfer_id) return;
+
+                    rx.done = true;
+                    const snap = rx;
+                    rx = null;
+                    await finalize(snap);
+                });
             };
 
-            coreSocket.onclose = () => { log("Connection lost."); };
+            coreSocket.onclose = () => { log('Connection lost.'); };
         }
 
-        async function decryptAndProvideDownload() {
-            const fullBuffer = new Uint8Array(incomingFile.size);
-            let offset = 0;
-            for (let chunk of fileChunks) {
-                fullBuffer.set(chunk, offset);
-                offset += chunk.byteLength;
-            }
-
-            const iv = fullBuffer.slice(0, 12);
-            const ciphertext = fullBuffer.slice(12);
-
-            try {
-                const rawKey = Uint8Array.from(atob(incomingFile.file_key), c => c.charCodeAt(0));
-                const cryptoKey = await window.crypto.subtle.importKey("raw", rawKey, { name: "AES-GCM", length: 256 }, false, ["decrypt"]);
-
-                const decryptedBuffer = await window.crypto.subtle.decrypt({ name: "AES-GCM", iv: iv }, cryptoKey, ciphertext);
-
-                const blob = new Blob([decryptedBuffer]);
-                const url = URL.createObjectURL(blob);
-
-                const logArea = document.getElementById('logArea');
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = incomingFile.filename;
-                a.textContent = `⬇️ Save Decrypted File: ${incomingFile.filename}`;
-                a.className = "download-link";
-
-                logArea.appendChild(document.createElement('br'));
-                logArea.appendChild(a);
-                logArea.appendChild(document.createElement('br'));
-
-                log(`✅ Decryption successful. File is ready.`);
-            } catch (e) {
-                log(`❌ File Decryption failed.`);
-            }
-
-            incomingFile = null;
-            receivedBytes = 0;
-            fileChunks = [];
-        }
+        // ── Button handlers ───────────────────────────────────────────────────────
 
         document.getElementById('handshakeBtn').addEventListener('click', async () => {
             if (!handshakeManager) return;
-            try { await handshakeManager.initiateHandshake(); } catch (e) { log("Error: " + e.message); }
+            try { await handshakeManager.initiateHandshake(); }
+            catch (e) { log('Error: ' + e.message); }
         });
 
         document.getElementById('sendBtn').addEventListener('click', async () => {
@@ -312,41 +365,61 @@
 
             log(`[File] Preparing ${file.name} for encrypted transfer...`);
 
-            const fileKey = await window.crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"]);
-            const exportedKey = await window.crypto.subtle.exportKey("raw", fileKey);
+            // Encrypt the file client-side with a fresh AES-GCM key
+            const fileKey = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+            const exportedKey = await crypto.subtle.exportKey('raw', fileKey);
             const base64Key = btoa(String.fromCharCode(...new Uint8Array(exportedKey)));
 
             const arrayBuffer = await file.arrayBuffer();
-            const iv = window.crypto.getRandomValues(new Uint8Array(12));
-            const ciphertext = await window.crypto.subtle.encrypt({ name: "AES-GCM", iv: iv }, fileKey, arrayBuffer);
+            const iv = crypto.getRandomValues(new Uint8Array(12));
+            const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, fileKey, arrayBuffer);
 
+            // Wire layout: [12-byte IV][AES-GCM ciphertext]
             const finalBuffer = new Uint8Array(iv.length + ciphertext.byteLength);
             finalBuffer.set(iv, 0);
             finalBuffer.set(new Uint8Array(ciphertext), iv.length);
 
-            const metaMessage = {
-                type: "FILE_TRANSFER_INIT",
+            const transferId = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+
+            // SECURITY FIX: encrypt the file metadata through the Double Ratchet
+            // before sending, exactly like a chat message.
+            //
+            // Previously this was sent as a plaintext FILE_TRANSFER_INIT JSON packet,
+            // which meant filename, file size, and — critically — the AES-GCM file_key
+            // were all visible to anyone reading the WebSocket stream between the
+            // browser and the local daemon.  An attacker with access to that stream
+            // could trivially decrypt the file content even without breaking the ratchet.
+            //
+            // Now the meta is serialised to a JSON string prefixed with [FILE_META]:::
+            // and passed to sendEncryptedMessage(), which runs it through the ratchet's
+            // AES-GCM + DH ratchet step — the same path as every chat message.
+            // The receiver's onMessageDecrypted callback already checks for this prefix
+            // and routes it correctly, so no changes are needed on the receive side.
+            //
+            // Ordering guarantee: sendEncryptedMessage sends synchronously over the
+            // WebSocket.  The HTTP upload to port 8081 happens immediately after.
+            // The daemon's enqueue_file_transfer() yields to the event loop between
+            // chunks (await asyncio.sleep(0)), so the meta MESSAGE packet will have
+            // been forwarded through the traffic shaper and delivered to the receiver
+            // before the first FILE_CHUNK packet is dequeued.  No artificial delay needed.
+            const metaPlaintext = `[FILE_META]:::${JSON.stringify({
                 filename: file.name,
                 size: finalBuffer.length,
-                file_key: base64Key
-            };
-
-            const outerPacket = {
-                type: "FILE_TRANSFER_INIT",
-                senderId: handshakeManager.clientId,
-                payload: metaMessage
-            };
-            coreSocket.send(JSON.stringify(outerPacket));
+                file_key: base64Key,
+                transfer_id: transferId
+            })}`;
+            await handshakeManager.sendEncryptedMessage(metaPlaintext);
 
             const formData = new FormData();
             formData.append('file', new Blob([finalBuffer]), file.name);
+            formData.append('transfer_id', transferId);
 
-            log("[File] Handing encrypted binary to Python Daemon (Port 8081)...");
+            log('[File] Metadata encrypted via ratchet. Sending chunks through traffic shaper...');
             try {
                 await fetch('http://localhost:8081/upload', { method: 'POST', body: formData });
-                log("[File] Daemon accepted the file and is throttling transmission.");
+                log('[File] Daemon accepted — chunking through traffic shaper.');
             } catch (err) {
-                log("❌ Error uploading to daemon. Is aiohttp running?");
+                log('❌ Error uploading to daemon. Is aiohttp running?');
             }
         });
     </script>

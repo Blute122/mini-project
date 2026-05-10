@@ -5,10 +5,10 @@ export class DoubleRatchet {
         this.rootKey = null; // ArrayBuffer
         this.sendChainKey = null; // ArrayBuffer
         this.recvChainKey = null; // ArrayBuffer
-        
+
         this.ourKeyPair = null; // CryptoKeyPair
         this.theirPublicKey = null; // CryptoKey
-        
+
         this.encoder = new TextEncoder();
         this.decoder = new TextDecoder();
     }
@@ -22,24 +22,24 @@ export class DoubleRatchet {
      */
     async initializeSession(sharedSecret, ourHandshakePair, theirHandshakePubKey, isInitiator) {
         this.rootKey = sharedSecret;
-        
+
         if (isInitiator) {
             // Initiator generates a NEW ephemeral key pair to start the sending chain
             this.ourKeyPair = await this.generateKeyPair();
             this.theirPublicKey = theirHandshakePubKey;
-            
+
             // Perform the first DH step
             const dhSecret = await this.deriveSharedSecret(this.ourKeyPair.privateKey, this.theirPublicKey);
             const { newRootKey, newChainKey } = await this.kdfRoot(this.rootKey, dhSecret);
-            
+
             this.rootKey = newRootKey;
             this.sendChainKey = newChainKey;
-            this.recvChainKey = null; 
+            this.recvChainKey = null;
         } else {
             // Responder uses their handshake key pair as their initial state
             this.ourKeyPair = ourHandshakePair;
             this.theirPublicKey = null; // Waiting for Initiator's first message
-            
+
             this.sendChainKey = null;
             this.recvChainKey = null;
         }
@@ -59,17 +59,17 @@ export class DoubleRatchet {
 
         // 2. Import the derived messageKey for AES-GCM
         const aesKey = await window.crypto.subtle.importKey(
-            "raw", 
-            messageKey, 
-            { name: "AES-GCM" }, 
-            false, 
+            "raw",
+            messageKey,
+            { name: "AES-GCM" },
+            false,
             ["encrypt"]
         );
 
         // 3. Encrypt the plaintext with a random 12-byte IV
         const iv = window.crypto.getRandomValues(new Uint8Array(12));
         const encodedPlaintext = this.encoder.encode(plaintext);
-        
+
         const ciphertextBuffer = await window.crypto.subtle.encrypt(
             { name: "AES-GCM", iv: iv },
             aesKey,
@@ -114,13 +114,13 @@ export class DoubleRatchet {
                 theirDhPublicKeyRaw,
                 { name: "ECDH", namedCurve: "P-384" },
                 true,
-                [] 
+                []
             );
 
             // Step 1 of Root Ratchet: Derive new DH shared secret using OUR current private key & THEIR new public key
             // Note: If this is the very first message we receive, we use the initial ourKeyPair we generated.
             const dhSecret = await this.deriveSharedSecret(this.ourKeyPair.privateKey, importedPubKey);
-            
+
             // Step the root chain to establish our new receiving chain
             const { newRootKey, newChainKey: nextRecvChain } = await this.kdfRoot(this.rootKey, dhSecret);
             this.rootKey = newRootKey;
@@ -129,12 +129,12 @@ export class DoubleRatchet {
 
             // Step 2 of Root Ratchet: Generate a NEW key pair for OUR next sending chain step 
             this.ourKeyPair = await this.generateKeyPair();
-            
+
             // Step the root ratchet again with OUR NEW private key and THEIR NEW public key
             // to derive the future sending chain.
             const nextDhSecret = await this.deriveSharedSecret(this.ourKeyPair.privateKey, this.theirPublicKey);
             const { newRootKey: nextRootKey, newChainKey: nextSendChain } = await this.kdfRoot(this.rootKey, nextDhSecret);
-            
+
             this.rootKey = nextRootKey;
             this.sendChainKey = nextSendChain;
         }
@@ -168,7 +168,7 @@ export class DoubleRatchet {
     async generateKeyPair() {
         return await window.crypto.subtle.generateKey(
             { name: "ECDH", namedCurve: "P-384" },
-            true, 
+            true,
             ["deriveKey", "deriveBits"]
         );
     }
@@ -177,16 +177,16 @@ export class DoubleRatchet {
         return await window.crypto.subtle.deriveBits(
             { name: "ECDH", public: publicKey },
             privateKey,
-            384 
+            384
         );
     }
 
     async hkdf(ikmBuffer, saltBuffer, infoString, outputLength) {
         const ikmKey = await window.crypto.subtle.importKey(
-            "raw", 
-            ikmBuffer, 
-            { name: "HKDF" }, 
-            false, 
+            "raw",
+            ikmBuffer,
+            { name: "HKDF" },
+            false,
             ["deriveBits"]
         );
 
@@ -198,16 +198,16 @@ export class DoubleRatchet {
                 info: this.encoder.encode(infoString)
             },
             ikmKey,
-            outputLength * 8 
+            outputLength * 8
         );
 
         return derivedBits;
     }
 
     async kdfChain(chainKeyBuffer) {
-        const constantSalt = new Uint8Array(32).buffer; 
+        const constantSalt = new Uint8Array(32).buffer;
         const derived = await this.hkdf(chainKeyBuffer, constantSalt, "KDF_CHAIN", 64);
-        
+
         return {
             newChainKey: derived.slice(0, 32),
             messageKey: derived.slice(32, 64)
@@ -216,7 +216,7 @@ export class DoubleRatchet {
 
     async kdfRoot(rootKeyBuffer, dhSecretBuffer) {
         const derived = await this.hkdf(dhSecretBuffer, rootKeyBuffer, "ROOT_CHAIN", 64);
-        
+
         return {
             newRootKey: derived.slice(0, 32),
             newChainKey: derived.slice(32, 64)
