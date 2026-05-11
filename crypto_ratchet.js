@@ -1,161 +1,146 @@
-// crypto_ratchet.js
+// crypto_ratchet.js — Double Ratchet with message ordering + replay protection
 
 export class DoubleRatchet {
     constructor() {
-        this.rootKey = null; // ArrayBuffer
-        this.sendChainKey = null; // ArrayBuffer
-        this.recvChainKey = null; // ArrayBuffer
+        this.rootKey      = null;
+        this.sendChainKey = null;
+        this.recvChainKey = null;
+        this.ourKeyPair   = null;
+        this.theirPublicKey = null;
 
-        this.ourKeyPair = null; // CryptoKeyPair
-        this.theirPublicKey = null; // CryptoKey
+        // Message ordering & replay protection
+        this.sendCounter = 0;          // increments with every sent message
+        this.recvCounter = 0;          // highest contiguous received index
+        this.skippedKeys = new Map();  // Map<msgIndex, messageKey ArrayBuffer>
+        // Maximum number of skipped keys we'll store (prevents unbounded memory)
+        this.MAX_SKIP = 100;
 
         this.encoder = new TextEncoder();
         this.decoder = new TextDecoder();
     }
 
-    /**
-     * Bootstraps the Double Ratchet state after the Initial Handshake.
-     * @param {ArrayBuffer} sharedSecret 32-byte secret established via handshake
-     * @param {CryptoKeyPair} ourHandshakePair The key pair generated during the handshake
-     * @param {CryptoKey} theirHandshakePubKey The remote peer's public key from the handshake
-     * @param {boolean} isInitiator True if we sent the HANDSHAKE_OFFER
-     */
     async initializeSession(sharedSecret, ourHandshakePair, theirHandshakePubKey, isInitiator) {
         this.rootKey = sharedSecret;
 
         if (isInitiator) {
-            // Initiator generates a NEW ephemeral key pair to start the sending chain
-            this.ourKeyPair = await this.generateKeyPair();
+            this.ourKeyPair     = await this.generateKeyPair();
             this.theirPublicKey = theirHandshakePubKey;
-
-            // Perform the first DH step
             const dhSecret = await this.deriveSharedSecret(this.ourKeyPair.privateKey, this.theirPublicKey);
             const { newRootKey, newChainKey } = await this.kdfRoot(this.rootKey, dhSecret);
-
-            this.rootKey = newRootKey;
+            this.rootKey      = newRootKey;
             this.sendChainKey = newChainKey;
             this.recvChainKey = null;
         } else {
-            // Responder uses their handshake key pair as their initial state
-            this.ourKeyPair = ourHandshakePair;
-            this.theirPublicKey = null; // Waiting for Initiator's first message
-
-            this.sendChainKey = null;
-            this.recvChainKey = null;
+            this.ourKeyPair     = ourHandshakePair;
+            this.theirPublicKey = null;
+            this.sendChainKey   = null;
+            this.recvChainKey   = null;
         }
+
+        this.sendCounter = 0;
+        this.recvCounter = 0;
+        this.skippedKeys.clear();
     }
 
-    /**
-     * Integration API: Encrypt Message using AES-GCM
-     * @param {string} plaintext The message to encrypt
-     * @returns {Promise<Object>} An object containing the header (iv, dhPubKey) and ciphertext
-     */
+    // ── Encrypt ──────────────────────────────────────────────────────────────
     async encryptMessage(plaintext) {
         if (!this.sendChainKey) throw new Error("Ratchet not initialized for sending.");
 
-        // 1. Step the sending chain forward
+        const msgIndex = this.sendCounter++;
+
         const { newChainKey, messageKey } = await this.kdfChain(this.sendChainKey);
         this.sendChainKey = newChainKey;
 
-        // 2. Import the derived messageKey for AES-GCM
-        const aesKey = await window.crypto.subtle.importKey(
-            "raw",
-            messageKey,
-            { name: "AES-GCM" },
-            false,
-            ["encrypt"]
-        );
+        // Use msgIndex as Additional Authenticated Data so AES-GCM also
+        // authenticates the sequence number — tampering with the index in
+        // transit causes decryption to fail.
+        const aad = this._indexToBytes(msgIndex);
 
-        // 3. Encrypt the plaintext with a random 12-byte IV
+        const aesKey = await window.crypto.subtle.importKey(
+            "raw", messageKey, { name: "AES-GCM" }, false, ["encrypt"]
+        );
         const iv = window.crypto.getRandomValues(new Uint8Array(12));
-        const encodedPlaintext = this.encoder.encode(plaintext);
 
         const ciphertextBuffer = await window.crypto.subtle.encrypt(
-            { name: "AES-GCM", iv: iv },
+            { name: "AES-GCM", iv, additionalData: aad },
             aesKey,
-            encodedPlaintext
+            this.encoder.encode(plaintext)
         );
 
-        // 4. Export our current public key to attach to the message header
         const exportedPubKey = await window.crypto.subtle.exportKey("raw", this.ourKeyPair.publicKey);
 
         return {
             header: {
-                dhPubKey: exportedPubKey, // ArrayBuffer
-                iv: iv.buffer             // ArrayBuffer
+                dhPubKey: exportedPubKey,
+                iv:       iv.buffer,
+                msgIndex              // included in header so receiver knows sequence position
             },
-            ciphertext: ciphertextBuffer  // ArrayBuffer
+            ciphertext: ciphertextBuffer
         };
     }
 
-    /**
-     * Integration API: Decrypt Message using AES-GCM
-     * @param {ArrayBuffer} ciphertext The encrypted payload
-     * @param {ArrayBuffer} iv The 12-byte initialization vector
-     * @param {ArrayBuffer} theirDhPublicKeyRaw The peer's DH public key from the message header
-     * @returns {Promise<string>} The decrypted plaintext string
-     */
-    async decryptMessage(ciphertext, iv, theirDhPublicKeyRaw) {
-        // 1. Check if the peer sent a new DH public key (requires a Root step)
-        let needsRootStep = true;
-        let importedPubKey = null;
-
-        if (this.theirPublicKey) {
-            const currentRaw = await window.crypto.subtle.exportKey("raw", this.theirPublicKey);
-            if (this._buffersEqual(currentRaw, theirDhPublicKeyRaw)) {
-                needsRootStep = false;
+    // ── Decrypt ──────────────────────────────────────────────────────────────
+    async decryptMessage(ciphertext, iv, theirDhPublicKeyRaw, msgIndex) {
+        // Replay check — reject anything at or below the last contiguous index
+        // unless we have it stored as a skipped key (out-of-order delivery).
+        if (msgIndex !== undefined && msgIndex < this.recvCounter) {
+            if (!this.skippedKeys.has(msgIndex)) {
+                throw new Error(`Replay attack detected: msgIndex ${msgIndex} already processed`);
             }
         }
 
+        let needsRootStep = true;
+        if (this.theirPublicKey) {
+            const currentRaw = await window.crypto.subtle.exportKey("raw", this.theirPublicKey);
+            if (this._buffersEqual(currentRaw, theirDhPublicKeyRaw)) needsRootStep = false;
+        }
+
         if (needsRootStep) {
-            // Import their new public key
-            importedPubKey = await window.crypto.subtle.importKey(
-                "raw",
-                theirDhPublicKeyRaw,
-                { name: "ECDH", namedCurve: "P-384" },
-                true,
-                []
+            const importedPubKey = await window.crypto.subtle.importKey(
+                "raw", theirDhPublicKeyRaw, { name: "ECDH", namedCurve: "P-384" }, true, []
             );
-
-            // Step 1 of Root Ratchet: Derive new DH shared secret using OUR current private key & THEIR new public key
-            // Note: If this is the very first message we receive, we use the initial ourKeyPair we generated.
             const dhSecret = await this.deriveSharedSecret(this.ourKeyPair.privateKey, importedPubKey);
-
-            // Step the root chain to establish our new receiving chain
             const { newRootKey, newChainKey: nextRecvChain } = await this.kdfRoot(this.rootKey, dhSecret);
-            this.rootKey = newRootKey;
+            this.rootKey      = newRootKey;
             this.recvChainKey = nextRecvChain;
             this.theirPublicKey = importedPubKey;
 
-            // Step 2 of Root Ratchet: Generate a NEW key pair for OUR next sending chain step 
             this.ourKeyPair = await this.generateKeyPair();
-
-            // Step the root ratchet again with OUR NEW private key and THEIR NEW public key
-            // to derive the future sending chain.
             const nextDhSecret = await this.deriveSharedSecret(this.ourKeyPair.privateKey, this.theirPublicKey);
             const { newRootKey: nextRootKey, newChainKey: nextSendChain } = await this.kdfRoot(this.rootKey, nextDhSecret);
-
-            this.rootKey = nextRootKey;
+            this.rootKey      = nextRootKey;
             this.sendChainKey = nextSendChain;
         }
 
-        // 2. Step the receiving chain forward
-        if (!this.recvChainKey) throw new Error("Ratchet not initialized for receiving. Did we miss a DH step?");
-        const { newChainKey, messageKey } = await this.kdfChain(this.recvChainKey);
-        this.recvChainKey = newChainKey;
+        if (!this.recvChainKey) throw new Error("Ratchet not initialized for receiving.");
 
-        // 3. Import the derived messageKey for AES-GCM
+        // If this message arrived out of order, its key was stored earlier
+        let messageKey;
+        if (msgIndex !== undefined && this.skippedKeys.has(msgIndex)) {
+            messageKey = this.skippedKeys.get(msgIndex);
+            this.skippedKeys.delete(msgIndex);
+        } else {
+            // Advance chain, storing skipped keys for any gaps
+            if (msgIndex !== undefined) {
+                await this._storeSkippedKeys(msgIndex);
+            }
+            const derived = await this.kdfChain(this.recvChainKey);
+            this.recvChainKey = derived.newChainKey;
+            messageKey        = derived.messageKey;
+
+            if (msgIndex !== undefined) {
+                this.recvCounter = msgIndex + 1;
+            }
+        }
+
+        const aad = msgIndex !== undefined ? this._indexToBytes(msgIndex) : new Uint8Array(4);
+
         const aesKey = await window.crypto.subtle.importKey(
-            "raw",
-            messageKey,
-            { name: "AES-GCM" },
-            false,
-            ["decrypt"]
+            "raw", messageKey, { name: "AES-GCM" }, false, ["decrypt"]
         );
 
-        // 4. Decrypt the ciphertext
         const decryptedBuffer = await window.crypto.subtle.decrypt(
-            { name: "AES-GCM", iv: new Uint8Array(iv) },
+            { name: "AES-GCM", iv: new Uint8Array(iv), additionalData: aad },
             aesKey,
             ciphertext
         );
@@ -163,75 +148,64 @@ export class DoubleRatchet {
         return this.decoder.decode(decryptedBuffer);
     }
 
-    // --- Core Crypto Primitives ---
+    // Store message keys for messages we haven't received yet (gaps in sequence)
+    async _storeSkippedKeys(targetIndex) {
+        let skipped = targetIndex - this.recvCounter;
+        if (skipped < 0) return;
+        if (skipped > this.MAX_SKIP) throw new Error("Too many skipped messages — possible attack");
+
+        for (let i = this.recvCounter; i < targetIndex; i++) {
+            const { newChainKey, messageKey } = await this.kdfChain(this.recvChainKey);
+            this.recvChainKey = newChainKey;
+            this.skippedKeys.set(i, messageKey);
+        }
+    }
+
+    _indexToBytes(index) {
+        const buf = new ArrayBuffer(4);
+        new DataView(buf).setUint32(0, index, false); // big-endian
+        return new Uint8Array(buf);
+    }
+
+    // ── Core Crypto Primitives (unchanged) ───────────────────────────────────
 
     async generateKeyPair() {
         return await window.crypto.subtle.generateKey(
-            { name: "ECDH", namedCurve: "P-384" },
-            true,
-            ["deriveKey", "deriveBits"]
+            { name: "ECDH", namedCurve: "P-384" }, true, ["deriveKey", "deriveBits"]
         );
     }
 
     async deriveSharedSecret(privateKey, publicKey) {
         return await window.crypto.subtle.deriveBits(
-            { name: "ECDH", public: publicKey },
-            privateKey,
-            384
+            { name: "ECDH", public: publicKey }, privateKey, 384
         );
     }
 
     async hkdf(ikmBuffer, saltBuffer, infoString, outputLength) {
         const ikmKey = await window.crypto.subtle.importKey(
-            "raw",
-            ikmBuffer,
-            { name: "HKDF" },
-            false,
-            ["deriveBits"]
+            "raw", ikmBuffer, { name: "HKDF" }, false, ["deriveBits"]
         );
-
-        const derivedBits = await window.crypto.subtle.deriveBits(
-            {
-                name: "HKDF",
-                hash: "SHA-256",
-                salt: saltBuffer,
-                info: this.encoder.encode(infoString)
-            },
-            ikmKey,
-            outputLength * 8
+        return await window.crypto.subtle.deriveBits(
+            { name: "HKDF", hash: "SHA-256", salt: saltBuffer, info: this.encoder.encode(infoString) },
+            ikmKey, outputLength * 8
         );
-
-        return derivedBits;
     }
 
     async kdfChain(chainKeyBuffer) {
         const constantSalt = new Uint8Array(32).buffer;
         const derived = await this.hkdf(chainKeyBuffer, constantSalt, "KDF_CHAIN", 64);
-
-        return {
-            newChainKey: derived.slice(0, 32),
-            messageKey: derived.slice(32, 64)
-        };
+        return { newChainKey: derived.slice(0, 32), messageKey: derived.slice(32, 64) };
     }
 
     async kdfRoot(rootKeyBuffer, dhSecretBuffer) {
         const derived = await this.hkdf(dhSecretBuffer, rootKeyBuffer, "ROOT_CHAIN", 64);
-
-        return {
-            newRootKey: derived.slice(0, 32),
-            newChainKey: derived.slice(32, 64)
-        };
+        return { newRootKey: derived.slice(0, 32), newChainKey: derived.slice(32, 64) };
     }
-
-    // --- Utility ---
 
     _buffersEqual(buf1, buf2) {
         if (buf1.byteLength !== buf2.byteLength) return false;
-        const dv1 = new Int8Array(buf1);
-        const dv2 = new Int8Array(buf2);
-        for (let i = 0; i !== buf1.byteLength; i++) {
-            if (dv1[i] !== dv2[i]) return false;
-        }
+        const a = new Int8Array(buf1), b = new Int8Array(buf2);
+        for (let i = 0; i < buf1.byteLength; i++) if (a[i] !== b[i]) return false;
         return true;
     }
 }

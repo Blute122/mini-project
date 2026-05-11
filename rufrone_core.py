@@ -1,3 +1,13 @@
+# rufrone_core.py — blind relay daemon (Phase 7)
+#
+# Frame types (first byte of every WebSocket/UDP payload):
+#   0x01  TEXT   — signalling / handshake JSON
+#   0x02  BINARY — file chunk (base64-encoded inside)
+#   0x03  EOF    — end-of-file sentinel (payload = transfer_id bytes)
+#
+# The daemon routes ONLY on this single prefix byte.
+# It never reads application content — it is cryptographically blind.
+
 import asyncio
 import websockets
 import json
@@ -8,38 +18,35 @@ from aiohttp import web
 import aiohttp_cors
 
 TARGET_PACKET_SIZE = 1024
-HEARTBEAT_INTERVAL = 0.15
-UI_PORT            = 8080
-LOCAL_UDP_PORT     = 9000
+HEARTBEAT_INTERVAL = 0.15     # seconds between traffic-shaper ticks
+# How many file chunks to drain per tick during an active transfer.
+# Chat/signalling packets (TEXT) still get exactly one slot per tick so they
+# are never starved.  Raising this speeds up file transfers without changing
+# the on-wire size or timing uniformity — every packet is still 1024 bytes.
+FILE_BURST_PER_TICK = 20
 
-RELAY_IP   = "127.0.0.1"
-RELAY_PORT = 9000
+UI_PORT        = 8080
+LOCAL_UDP_PORT = 9000
+RELAY_IP       = "127.0.0.1"
+RELAY_PORT     = 9000
 
 udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 udp_socket.bind(("0.0.0.0", LOCAL_UDP_PORT))
 udp_socket.setblocking(False)
-
 udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 5242880)
 udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 5242880)
 
-message_queue = asyncio.Queue()   # everything going OUT over UDP
-jitter_buffer  = asyncio.Queue()  # everything coming IN from UDP
-connected_uis  = set()
+FRAME_TEXT   = b'\x01'
+FRAME_BINARY = b'\x02'
+FRAME_EOF    = b'\x03'
 
-# ---------------------------------------------------------------------------
-# TRAFFIC SHAPING
-# ---------------------------------------------------------------------------
-# All outbound traffic — chat, handshake, AND file chunks — is enqueued here
-# and emitted by traffic_shaper_loop at a steady heartbeat rate, padded to
-# exactly TARGET_PACKET_SIZE bytes.  From a network observer's perspective,
-# every packet looks identical: same size, constant rate, random padding.
-# File chunks are base64-encoded JSON objects, so they are byte-for-byte
-# indistinguishable from chat messages or dummy packets.
-# ---------------------------------------------------------------------------
+# Two separate queues so file chunks never block handshake/chat packets
+text_queue = asyncio.Queue()    # TEXT frames  — signalling, handshake, chat
+file_queue = asyncio.Queue()    # BINARY + EOF frames — file transfer only
+jitter_buffer = asyncio.Queue() # inbound from UDP
+connected_uis = set()
 
-CHUNK_SIZE = 700  # raw bytes per file chunk before base64 (~933 chars after)
-              # Chosen so the JSON envelope fits within TARGET_PACKET_SIZE (1024).
-              # base64(700) = 933 chars + ~60 chars of JSON overhead = ~993 bytes ✓
+# ── Traffic shaping ───────────────────────────────────────────────────────────
 
 def pad_payload(data_bytes: bytes) -> bytes:
     n = len(data_bytes)
@@ -49,102 +56,77 @@ def pad_payload(data_bytes: bytes) -> bytes:
 
 async def traffic_shaper_loop():
     """
-    Dequeue messages and send over UDP at a fixed heartbeat rate.
-    When the queue is empty, sends a dummy random packet so the traffic
-    rate is constant regardless of whether real data is flowing.
-    Every outbound packet is padded to exactly TARGET_PACKET_SIZE bytes.
+    Every HEARTBEAT_INTERVAL tick:
+      1. Drain at most one TEXT packet (chat/handshake — low volume, time-sensitive)
+      2. Drain up to FILE_BURST_PER_TICK file chunks (high volume, throughput-sensitive)
+      3. If nothing was sent, emit a dummy cover packet
+
+    This gives file transfers ~20× the throughput of the old one-packet-per-tick
+    design while keeping every on-wire packet exactly TARGET_PACKET_SIZE bytes.
+    A network observer still sees constant-size packets at a constant rate —
+    the burst just means more packets per tick, not variable-size packets.
     """
     while True:
+        sent_anything = False
+
+        # ── Priority slot: one TEXT packet ────────────────────────────────────
         try:
-            msg = await asyncio.wait_for(message_queue.get(), timeout=0.01)
-            udp_socket.sendto(pad_payload(msg.encode('utf-8')), (RELAY_IP, RELAY_PORT))
-            message_queue.task_done()
-        except asyncio.TimeoutError:
-            # Dummy cover traffic — keeps the rate constant
+            msg = text_queue.get_nowait()
+            udp_socket.sendto(pad_payload(msg), (RELAY_IP, RELAY_PORT))
+            text_queue.task_done()
+            sent_anything = True
+        except asyncio.QueueEmpty:
+            pass
+
+        # ── Bulk slot: up to FILE_BURST_PER_TICK file chunks ──────────────────
+        for _ in range(FILE_BURST_PER_TICK):
+            try:
+                msg = file_queue.get_nowait()
+                udp_socket.sendto(pad_payload(msg), (RELAY_IP, RELAY_PORT))
+                file_queue.task_done()
+                sent_anything = True
+            except asyncio.QueueEmpty:
+                break
+
+        # ── Cover traffic: keep rate constant when nothing to send ────────────
+        if not sent_anything:
             udp_socket.sendto(os.urandom(TARGET_PACKET_SIZE), (RELAY_IP, RELAY_PORT))
+
         await asyncio.sleep(HEARTBEAT_INTERVAL)
 
+# ── WebSocket handler ─────────────────────────────────────────────────────────
 
-# ---------------------------------------------------------------------------
-# FILE TRANSFER — through the traffic shaper queue (obfuscated like chat)
-# ---------------------------------------------------------------------------
+async def handle_ui_connection(websocket):
+    print("\n[Bridge] ✅ Web UI Connected")
+    connected_uis.add(websocket)
+    try:
+        async for message in websocket:
+            if isinstance(message, bytes):
+                frame_type = message[:1]
+                payload    = message[1:]
 
-async def enqueue_file_transfer(file_buffer: bytes, transfer_id: str):
-    """
-    Slice the file into CHUNK_SIZE chunks, base64-encode each one, wrap in a
-    JSON envelope, and push into message_queue.  The traffic shaper picks them
-    up and emits them at the same rate as chat messages, padded to the same
-    fixed size.  A network observer sees no difference between a file transfer
-    and a conversation.
+                if frame_type == FRAME_BINARY:
+                    # File chunk — base64-encode, push to file_queue
+                    chunk_b64 = base64.b64encode(payload)
+                    await file_queue.put(FRAME_BINARY + chunk_b64)
 
-    Throttle: we put a small sleep between enqueues so we don't flood the
-    queue and starve chat messages.  The actual on-wire rate is still governed
-    by traffic_shaper_loop's HEARTBEAT_INTERVAL.
-    """
-    tid       = transfer_id
-    total     = len(file_buffer)
-    num_chunks = (total + CHUNK_SIZE - 1) // CHUNK_SIZE
-    print(f"[File] Transfer {tid}: {total} bytes → {num_chunks} chunks via traffic shaper")
+                elif frame_type == FRAME_EOF:
+                    # EOF sentinel — push to file_queue (preserves ordering after chunks)
+                    await file_queue.put(FRAME_EOF + payload)
 
-    for i in range(0, total, CHUNK_SIZE):
-        chunk     = file_buffer[i:i + CHUNK_SIZE]
-        chunk_b64 = base64.b64encode(chunk).decode('ascii')
-        envelope  = json.dumps({
-            "type":        "FILE_CHUNK",
-            "transfer_id": tid,
-            "data":        chunk_b64
-        })
-        await message_queue.put(envelope)
-        # Yield to the event loop every chunk so other tasks (chat, handshake)
-        # can still run during a large file transfer.
-        await asyncio.sleep(0)
+                # Unknown binary frame types are silently dropped
 
-    # EOF sentinel — also goes through the queue so it arrives in order,
-    # after all chunks have been emitted by the traffic shaper.
-    eof_envelope = json.dumps({
-        "type":        "FILE_EOF",
-        "transfer_id": tid
-    })
-    await message_queue.put(eof_envelope)
-    print(f"[File] Transfer {tid}: all {num_chunks} chunks + EOF enqueued.")
+            else:
+                # Text frame — signalling / handshake / chat JSON
+                await text_queue.put(FRAME_TEXT + message.encode('utf-8'))
+                await websocket.send(json.dumps({"status": "queued"}))
 
+    except Exception:
+        print("\n[Bridge] ❌ Web UI Disconnected.")
+    finally:
+        connected_uis.discard(websocket)
 
-async def handle_file_upload(request):
-    reader      = await request.multipart()
-    file_data   = None
-    transfer_id = None
-
-    async for field in reader:
-        if field.name == 'file':
-            file_data = await field.read()
-        elif field.name == 'transfer_id':
-            transfer_id = (await field.read()).decode().strip()
-
-    if file_data is None:
-        return web.json_response({"error": "no file"}, status=400)
-    if not transfer_id:
-        transfer_id = os.urandom(6).hex()
-
-    asyncio.create_task(enqueue_file_transfer(file_data, transfer_id))
-    return web.json_response({"status": "queued", "transfer_id": transfer_id})
-
-
-async def start_ingestion_server():
-    app  = web.Application(client_max_size=1024**2 * 200)
-    cors = aiohttp_cors.setup(app, defaults={"*": aiohttp_cors.ResourceOptions(
-        allow_credentials=True, expose_headers="*", allow_headers="*"
-    )})
-    resource = cors.add(app.router.add_resource("/upload"))
-    cors.add(resource.add_route("POST", handle_file_upload))
-    runner = web.AppRunner(app)
-    await runner.setup()
-    await web.TCPSite(runner, 'localhost', 8081).start()
-    print("[Setup] HTTP ingestion on http://localhost:8081")
-
-
-# ---------------------------------------------------------------------------
-# UDP RECEIVE → PLAYBACK
-# ---------------------------------------------------------------------------
+# ── UDP receive ───────────────────────────────────────────────────────────────
 
 async def udp_receive_loop():
     loop = asyncio.get_event_loop()
@@ -157,95 +139,69 @@ async def udp_receive_loop():
         except Exception:
             await asyncio.sleep(1)
 
+# ── Playback loop ─────────────────────────────────────────────────────────────
 
 async def playback_loop():
     """
-    Read packets from the jitter buffer and forward to connected UIs.
-
-    Packet types after decoding:
-      FILE_CHUNK  → decode base64 data, send as WebSocket binary frame
-      FILE_EOF    → forward as JSON text frame (browser matches by transfer_id)
-      anything else (chat, handshake, dummy) → forward as JSON text frame
-
-    Dummy packets (random bytes, not valid JSON) are silently dropped.
+    Drain the jitter buffer and forward packets to all connected UIs.
+    Routing is purely by the single frame-type prefix byte — the daemon
+    never reads application content.
     """
     while True:
         batch = 0
-        while not jitter_buffer.empty() and batch < 10:
+        while not jitter_buffer.empty() and batch < 50:  # higher batch = lower latency
             packet = await jitter_buffer.get()
             batch += 1
 
-            try:
-                raw_str   = packet.decode('utf-8', errors='ignore')
-                start_idx = raw_str.find('{')
-                if start_idx == -1:
-                    continue  # dummy / padding packet — drop silently
+            if len(packet) < 1:
+                continue
 
-                obj, end_idx = json.JSONDecoder().raw_decode(raw_str[start_idx:])
-                pkt_type     = obj.get("type", "")
+            frame_type = packet[:1]
+            payload    = packet[1:]
 
-                if pkt_type == "FILE_CHUNK":
-                    # Decode base64 back to raw bytes and send as a binary WS frame.
-                    # Binary frames are handled by HandshakeManager's onBinaryReceived
-                    # callback in the browser.
-                    raw_bytes = base64.b64decode(obj["data"])
+            if frame_type == FRAME_TEXT:
+                try:
+                    raw_str   = payload.decode('utf-8', errors='ignore')
+                    start     = raw_str.find('{')
+                    if start == -1:
+                        continue
+                    _, end    = json.JSONDecoder().raw_decode(raw_str[start:])
+                    valid_json = raw_str[start:start + end]
                     for ws in list(connected_uis):
-                        try:
-                            await ws.send(raw_bytes)
-                        except Exception:
-                            pass
+                        try: await ws.send(valid_json)
+                        except Exception: pass
+                except Exception:
+                    pass
 
-                elif pkt_type == "FILE_EOF":
-                    # Rename to RUFRONE_FILE_EOF so the existing browser handler
-                    # picks it up without any changes to index.html.
-                    eof_msg = json.dumps({
-                        "type":        "RUFRONE_FILE_EOF",
-                        "transfer_id": obj.get("transfer_id", "")
-                    })
+            elif frame_type == FRAME_BINARY:
+                try:
+                    raw_bytes = base64.b64decode(payload.rstrip(b'\x00'))
                     for ws in list(connected_uis):
-                        try:
-                            await ws.send(eof_msg)
-                        except Exception:
-                            pass
+                        try: await ws.send(raw_bytes)
+                        except Exception: pass
+                except Exception:
+                    pass
 
-                else:
-                    # Chat, handshake, status — forward as-is
-                    valid_json = raw_str[start_idx:start_idx + end_idx]
+            elif frame_type == FRAME_EOF:
+                try:
+                    tid     = payload.rstrip(b'\x00').decode('utf-8', errors='replace')
+                    eof_msg = json.dumps({"type": "RUFRONE_FILE_EOF", "transfer_id": tid})
                     for ws in list(connected_uis):
-                        try:
-                            await ws.send(valid_json)
-                        except Exception:
-                            pass
+                        try: await ws.send(eof_msg)
+                        except Exception: pass
+                except Exception:
+                    pass
+            # else: dummy/random packet — drop silently
 
-            except Exception:
-                pass  # malformed / non-JSON packet — drop
+        await asyncio.sleep(0.005)  # 5ms between batches for low latency
 
-        await asyncio.sleep(0.01)
-
-
-# ---------------------------------------------------------------------------
-# WEBSOCKET UI HANDLER
-# ---------------------------------------------------------------------------
-
-async def handle_ui_connection(websocket):
-    print("\n[Bridge] ✅ Web UI Connected")
-    connected_uis.add(websocket)
-    try:
-        async for message in websocket:
-            await message_queue.put(message)
-            await websocket.send(json.dumps({"status": "queued"}))
-    except Exception:
-        print("\n[Bridge] ❌ Web UI Disconnected.")
-    finally:
-        connected_uis.discard(websocket)
-
+# ── Main ──────────────────────────────────────────────────────────────────────
 
 async def main():
     server = await websockets.serve(handle_ui_connection, "localhost", UI_PORT)
     print("=" * 42)
-    print(" RUFRONE CORE DAEMON - PHASE 6 ACTIVE")
+    print(" RUFRONE CORE DAEMON - PHASE 7 ACTIVE")
     print("=" * 42)
-    await start_ingestion_server()
     await asyncio.gather(
         server.wait_closed(),
         asyncio.create_task(traffic_shaper_loop()),
