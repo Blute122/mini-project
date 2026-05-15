@@ -4,423 +4,1416 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Rufrone Client - Phase 6</title>
+    <title>Rufrone</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@300;400;500&display=swap"
+        rel="stylesheet">
     <style>
+        /* ── Design: Terminal-noir. Charcoal + ember amber. Monospace precision. ── */
         :root {
-            --bg: #0d1117;
-            --text: #c9d1d9;
-            --accent: #58a6ff;
-            --border: #30363d;
-            --success: #238636;
+            --bg: #0e0e0f;
+            --surface: #161618;
+            --surface2: #1e1e21;
+            --surface3: #262629;
+            --border: #2e2e33;
+            --border2: #3a3a40;
+            --text: #e8e8ea;
+            --text2: #9494a0;
+            --text3: #5a5a66;
+            --amber: #f59e0b;
+            --amber-dim: #92600a;
+            --amber-glow: #f59e0b22;
+            --green: #22c55e;
+            --green-dim: #15803d;
+            --red: #ef4444;
+            --red-dim: #991b1b;
+            --blue: #6366f1;
+            --radius: 10px;
+            --font-ui: 'Syne', sans-serif;
+            --font-mono: 'JetBrains Mono', monospace;
+        }
+
+        *,
+        *::before,
+        *::after {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
         }
 
         body {
-            font-family: 'Courier New', monospace;
+            font-family: var(--font-mono);
             background: var(--bg);
             color: var(--text);
-            padding: 20px;
-            max-width: 600px;
-            margin: 0 auto;
+            height: 100vh;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
         }
 
-        h2 {
+        /* ── Top bar ─────────────────────────────────────────────────── */
+        .topbar {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 0 20px;
+            height: 52px;
+            background: var(--surface);
             border-bottom: 1px solid var(--border);
-            padding-bottom: 10px;
+            flex-shrink: 0;
         }
 
-        .panel {
+        .topbar-logo {
+            font-family: var(--font-ui);
+            font-weight: 800;
+            font-size: 1.1rem;
+            color: var(--amber);
+            letter-spacing: .04em;
+        }
+
+        .topbar-logo span {
+            color: var(--text3);
+        }
+
+        .topbar-sep {
+            flex: 1;
+        }
+
+        .topbar-node {
+            font-size: .7rem;
+            color: var(--text3);
+            background: var(--surface2);
             border: 1px solid var(--border);
-            padding: 15px;
-            margin-bottom: 20px;
-            border-radius: 6px;
-            background: #161b22;
-        }
-
-        button {
-            background: var(--border);
-            color: var(--text);
-            border: 1px solid #8b949e;
-            padding: 8px 16px;
-            cursor: pointer;
-            font-family: inherit;
-            margin-top: 10px;
             border-radius: 4px;
-            transition: .2s;
+            padding: 3px 8px;
         }
 
-        button:hover {
-            background: #8b949e;
-            color: #000;
+        .topbar-node.live {
+            border-color: var(--green-dim);
+            color: var(--green);
         }
 
-        button:disabled {
-            opacity: .5;
-            cursor: not-allowed;
-        }
-
-        .primary-btn {
-            background: var(--success);
-            color: #fff;
-            border: none;
-        }
-
-        .primary-btn:hover {
-            background: #2ea043;
-        }
-
-        input[type=text] {
-            width: calc(100% - 22px);
-            padding: 10px;
-            background: var(--bg);
-            color: var(--text);
-            border: 1px solid var(--border);
-            margin-bottom: 10px;
-        }
-
-        input[type=file] {
-            margin-top: 10px;
-            font-family: inherit;
-        }
-
-        #logArea {
-            height: 250px;
-            overflow-y: auto;
-            font-size: .85em;
-            color: #8b949e;
-            border-top: 1px dashed var(--border);
-            padding-top: 10px;
-            margin-top: 10px;
-        }
-
-        .status-dot {
+        .dot {
             display: inline-block;
-            width: 10px;
-            height: 10px;
+            width: 7px;
+            height: 7px;
             border-radius: 50%;
-            background: red;
+            background: var(--red);
             margin-right: 5px;
         }
 
-        .connected {
-            background: var(--success);
+        .dot.on {
+            background: var(--green);
+            box-shadow: 0 0 6px var(--green);
         }
 
-        .download-link {
-            display: inline-block;
-            background: #1f6feb;
-            color: #fff;
-            padding: 5px 10px;
+        /* ── Main layout ─────────────────────────────────────────────── */
+        .layout {
+            display: grid;
+            grid-template-columns: 240px 1fr 280px;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        /* ── Left sidebar — peer info ────────────────────────────────── */
+        .sidebar-left {
+            background: var(--surface);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .sidebar-section {
+            padding: 16px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .sidebar-label {
+            font-family: var(--font-ui);
+            font-size: .65rem;
+            font-weight: 700;
+            letter-spacing: .12em;
+            text-transform: uppercase;
+            color: var(--text3);
+            margin-bottom: 10px;
+        }
+
+        .peer-card {
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 12px;
+        }
+
+        .peer-avatar {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: var(--surface3);
+            border: 2px solid var(--border2);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.1rem;
+            margin-bottom: 10px;
+        }
+
+        .peer-did {
+            font-size: .6rem;
+            color: var(--amber);
+            word-break: break-all;
+            line-height: 1.5;
+            margin-bottom: 6px;
+        }
+
+        .peer-status {
+            font-size: .65rem;
+            color: var(--text3);
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            font-size: .6rem;
+            padding: 2px 7px;
+            border-radius: 3px;
+            font-family: var(--font-ui);
+            font-weight: 600;
+            letter-spacing: .05em;
+        }
+
+        .badge-ok {
+            background: #15803d33;
+            color: var(--green);
+            border: 1px solid #15803d66;
+        }
+
+        .badge-warn {
+            background: #92600a33;
+            color: var(--amber);
+            border: 1px solid #92600a66;
+        }
+
+        .badge-err {
+            background: #991b1b33;
+            color: var(--red);
+            border: 1px solid #991b1b66;
+        }
+
+        .safety-number {
+            font-size: .6rem;
+            font-family: var(--font-mono);
+            color: var(--amber);
+            letter-spacing: .08em;
+            padding: 8px;
+            background: var(--amber-glow);
+            border: 1px solid var(--amber-dim);
+            border-radius: 6px;
+            margin-top: 8px;
+            word-break: break-all;
+            line-height: 1.8;
+        }
+
+        .log-area {
+            flex: 1;
+            overflow-y: auto;
+            padding: 12px 16px;
+            font-size: .62rem;
+            color: var(--text3);
+            line-height: 1.7;
+        }
+
+        .log-area::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        .log-area::-webkit-scrollbar-thumb {
+            background: var(--border2);
+            border-radius: 2px;
+        }
+
+        .log-entry {
+            padding: 1px 0;
+        }
+
+        .log-entry.ok {
+            color: var(--green);
+        }
+
+        .log-entry.warn {
+            color: var(--amber);
+        }
+
+        .log-entry.err {
+            color: var(--red);
+        }
+
+        /* ── Centre — chat ───────────────────────────────────────────── */
+        .chat-area {
+            display: flex;
+            flex-direction: column;
+            background: var(--bg);
+            overflow: hidden;
+        }
+
+        .chat-header {
+            padding: 0 20px;
+            height: 48px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            border-bottom: 1px solid var(--border);
+            background: var(--surface);
+            flex-shrink: 0;
+        }
+
+        .chat-header-name {
+            font-family: var(--font-ui);
+            font-weight: 700;
+            font-size: .9rem;
+            color: var(--text);
+        }
+
+        .chat-header-sub {
+            font-size: .65rem;
+            color: var(--text3);
+        }
+
+        .messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .messages::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        .messages::-webkit-scrollbar-thumb {
+            background: var(--border2);
+            border-radius: 2px;
+        }
+
+        .msg-row {
+            display: flex;
+            gap: 8px;
+            align-items: flex-end;
+            animation: fadein .2s ease;
+            min-width: 0;
+        }
+
+        @keyframes fadein {
+            from {
+                opacity: 0;
+                transform: translateY(6px);
+            }
+
+            to {
+                opacity: 1;
+                transform: none;
+            }
+        }
+
+        .msg-row.mine {
+            flex-direction: row-reverse;
+        }
+
+        .msg-avatar {
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            background: var(--surface3);
+            border: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: .7rem;
+            flex-shrink: 0;
+        }
+
+        .msg-bubble {
+            max-width: 68%;
+            min-width: 0;
+            padding: 9px 13px;
+            border-radius: 12px;
+            /* Use proportional font for messages — monospace (JetBrains Mono) has
+               fixed-width wide characters that cause short words to stack vertically
+               instead of wrapping horizontally across the bubble width. */
+            font-family: var(--font-ui);
+            font-weight: 400;
+            font-size: .82rem;
+            line-height: 1.6;
+            /* overflow-wrap breaks only when a single word is truly too long.
+               white-space: pre-wrap preserves intentional newlines from the sender. */
+            overflow-wrap: break-word;
+            white-space: pre-wrap;
+        }
+
+        .msg-row.mine .msg-bubble {
+            background: var(--surface3);
+            border: 1px solid var(--border2);
+            border-bottom-right-radius: 3px;
+            color: var(--text);
+        }
+
+        .msg-row.theirs .msg-bubble {
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-bottom-left-radius: 3px;
+            color: var(--text);
+        }
+
+        .msg-time {
+            font-size: .55rem;
+            color: var(--text3);
+            margin-top: 3px;
+            padding: 0 2px;
+        }
+
+        .msg-row.mine .msg-time {
+            text-align: right;
+        }
+
+        .msg-row.theirs .msg-time {
+            text-align: left;
+        }
+
+        .file-bubble {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 13px;
+            border-radius: 10px;
+            background: var(--surface3);
+            border: 1px solid var(--border2);
+            max-width: 280px;
+        }
+
+        .file-icon {
+            font-size: 1.2rem;
+        }
+
+        .file-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .file-name {
+            font-size: .72rem;
+            color: var(--text);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .file-size {
+            font-size: .6rem;
+            color: var(--text3);
+            margin-top: 2px;
+        }
+
+        .file-progress-bar {
+            height: 3px;
+            background: var(--border);
+            border-radius: 2px;
+            margin-top: 6px;
+            overflow: hidden;
+        }
+
+        .file-progress-fill {
+            height: 100%;
+            background: var(--amber);
+            border-radius: 2px;
+            transition: width .3s;
+        }
+
+        .dl-link {
+            font-size: .65rem;
+            color: var(--amber);
             text-decoration: none;
+            border: 1px solid var(--amber-dim);
             border-radius: 4px;
-            margin: 10px 0;
+            padding: 3px 8px;
+            white-space: nowrap;
+        }
+
+        .dl-link:hover {
+            background: var(--amber-glow);
+        }
+
+        .empty-state {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            color: var(--text3);
+        }
+
+        .empty-state .es-icon {
+            font-size: 2.5rem;
+            opacity: .3;
+        }
+
+        .empty-state .es-text {
+            font-size: .75rem;
+            font-family: var(--font-ui);
+        }
+
+        /* ── Input bar ───────────────────────────────────────────────── */
+        .input-bar {
+            padding: 12px 16px;
+            border-top: 1px solid var(--border);
+            background: var(--surface);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-shrink: 0;
+        }
+
+        .input-bar input[type=text] {
+            flex: 1;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            color: var(--text);
+            font-family: var(--font-mono);
+            font-size: .78rem;
+            padding: 9px 12px;
+            border-radius: 8px;
+            outline: none;
+            transition: border-color .15s;
+        }
+
+        .input-bar input[type=text]:focus {
+            border-color: var(--amber-dim);
+        }
+
+        .input-bar input[type=text]:disabled {
+            opacity: .4;
+            cursor: not-allowed;
+        }
+
+        .icon-btn {
+            width: 36px;
+            height: 36px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: var(--surface2);
+            color: var(--text2);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            font-size: .9rem;
+            transition: all .15s;
+            flex-shrink: 0;
+        }
+
+        .icon-btn:hover:not(:disabled) {
+            border-color: var(--amber-dim);
+            color: var(--amber);
+        }
+
+        .icon-btn:disabled {
+            opacity: .3;
+            cursor: not-allowed;
+        }
+
+        .icon-btn.send {
+            background: var(--amber);
+            border-color: var(--amber);
+            color: #000;
             font-weight: bold;
         }
 
-        .download-link:hover {
-            background: #388bfd;
+        .icon-btn.send:hover:not(:disabled) {
+            background: #fbbf24;
+        }
+
+        .icon-btn.send:disabled {
+            background: var(--surface2);
+            border-color: var(--border);
+            color: var(--text3);
+        }
+
+        input[type=file] {
+            display: none;
+        }
+
+        /* ── Right sidebar — controls ────────────────────────────────── */
+        .sidebar-right {
+            background: var(--surface);
+            border-left: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+            gap: 0;
+        }
+
+        .sidebar-right::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        .sidebar-right::-webkit-scrollbar-thumb {
+            background: var(--border2);
+            border-radius: 2px;
+        }
+
+        .ctrl-section {
+            padding: 16px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .ctrl-section:last-child {
+            border-bottom: none;
+        }
+
+        .ctrl-label {
+            font-family: var(--font-ui);
+            font-size: .62rem;
+            font-weight: 700;
+            letter-spacing: .12em;
+            text-transform: uppercase;
+            color: var(--text3);
+            margin-bottom: 10px;
+        }
+
+        .ctrl-input {
+            width: 100%;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            color: var(--text);
+            font-family: var(--font-mono);
+            font-size: .72rem;
+            padding: 8px 10px;
+            border-radius: 7px;
+            outline: none;
+            margin-bottom: 8px;
+            transition: border-color .15s;
+        }
+
+        .ctrl-input:focus {
+            border-color: var(--amber-dim);
+        }
+
+        .ctrl-hint {
+            font-size: .58rem;
+            color: var(--text3);
+            line-height: 1.5;
+            margin-bottom: 8px;
+        }
+
+        .btn {
+            width: 100%;
+            padding: 8px 12px;
+            border-radius: 7px;
+            font-family: var(--font-ui);
+            font-size: .72rem;
+            font-weight: 700;
+            letter-spacing: .04em;
+            cursor: pointer;
+            border: none;
+            transition: all .15s;
+            margin-bottom: 6px;
+        }
+
+        .btn:last-child {
+            margin-bottom: 0;
+        }
+
+        .btn:disabled {
+            opacity: .35;
+            cursor: not-allowed;
+        }
+
+        .btn-primary {
+            background: var(--amber);
+            color: #0e0e0f;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            background: #fbbf24;
+        }
+
+        .btn-ghost {
+            background: var(--surface2);
+            color: var(--text2);
+            border: 1px solid var(--border);
+        }
+
+        .btn-ghost:hover:not(:disabled) {
+            border-color: var(--border2);
+            color: var(--text);
+        }
+
+        .btn-danger {
+            background: transparent;
+            color: var(--red);
+            border: 1px solid var(--red-dim);
+        }
+
+        .btn-danger:hover:not(:disabled) {
+            background: #991b1b22;
+        }
+
+        .did-display {
+            font-size: .6rem;
+            color: var(--amber);
+            word-break: break-all;
+            line-height: 1.6;
+            padding: 7px 8px;
+            background: var(--amber-glow);
+            border: 1px solid var(--amber-dim);
+            border-radius: 6px;
+            margin-top: 4px;
+        }
+
+        .status-row {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: .68rem;
+            color: var(--text3);
+            margin-bottom: 8px;
+        }
+
+        /* spinner for PBKDF2 */
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border: 2px solid var(--border2);
+            border-top-color: var(--amber);
+            border-radius: 50%;
+            animation: spin .7s linear infinite;
+            vertical-align: middle;
+            margin-right: 4px;
+        }
+
+        /* system message in chat */
+        .sys-msg {
+            text-align: center;
+            font-size: .62rem;
+            color: var(--text3);
+            padding: 4px 0;
+            font-family: var(--font-ui);
         }
     </style>
 </head>
 
 <body>
-    <h2>🛡️ Rufrone Client (Phase 6)</h2>
 
-    <div class="panel">
-        <h3>1. Self-Sovereign Identity (SSI)</h3>
-        <button id="genKeyBtn">Generate Local Identity (DID)</button>
-        <div id="didDisplay" style="margin-top:10px;font-size:.8em;word-break:break-all;color:var(--accent)"></div>
+    <!-- Top bar -->
+    <div class="topbar">
+        <div class="topbar-logo">RUFRONE<span>/secure</span></div>
+        <div class="topbar-sep"></div>
+        <div class="topbar-node" id="nodeStatus"><span class="dot" id="connDot"></span>localhost:8080</div>
     </div>
 
-    <div class="panel">
-        <h3>2. Local Daemon Connection</h3>
-        <p><span id="connStatus" class="status-dot"></span><span id="connText">Disconnected from Core</span></p>
-        <button id="handshakeBtn" class="primary-btn" disabled>Initiate Peer Handshake</button>
-        <div id="safetyNumberDisplay" style="margin-top:10px;font-weight:bold;color:var(--accent);display:none"></div>
-    </div>
+    <!-- Main layout -->
+    <div class="layout">
 
-    <div class="panel">
-        <h3>3. Secure Transmission (Chat)</h3>
-        <input type="text" id="msgInput" placeholder="Type a message to send through WireGuard..." disabled>
-        <button id="sendBtn" class="primary-btn" disabled>Send Encrypted Payload</button>
-    </div>
+        <!-- ── Left — peer info + event log ──────────────────────────── -->
+        <div class="sidebar-left">
+            <div class="sidebar-section">
+                <div class="sidebar-label">Peer</div>
+                <div class="peer-card" id="peerCard">
+                    <div class="peer-avatar">👤</div>
+                    <div class="peer-did" id="peerDID">No peer connected</div>
+                    <div class="peer-status">
+                        <span id="peerBadge" class="badge badge-warn">AWAITING</span>
+                    </div>
+                    <div id="safetyNumberDisplay" style="display:none" class="safety-number"></div>
+                    <div id="verificationStatus" style="margin-top:6px;font-size:.6rem"></div>
+                </div>
+            </div>
+            <div class="sidebar-section" style="padding-bottom:8px">
+                <div class="sidebar-label">Event Log</div>
+            </div>
+            <div class="log-area" id="logArea">
+                <div class="log-entry">System ready.</div>
+            </div>
+        </div>
 
-    <div class="panel">
-        <h3>4. Bulk File Transfer (QoS Throttled)</h3>
-        <input type="file" id="filePicker" disabled>
-        <br>
-        <button id="sendFileBtn" class="primary-btn" disabled>Send Encrypted File</button>
-    </div>
+        <!-- ── Centre — messages + input ─────────────────────────────── -->
+        <div class="chat-area">
+            <div class="chat-header">
+                <div>
+                    <div class="chat-header-name" id="chatHeaderName">Rufrone Secure Channel</div>
+                    <div class="chat-header-sub" id="chatHeaderSub">End-to-end encrypted · Double Ratchet · P-384</div>
+                </div>
+            </div>
 
-    <div class="panel">
-        <div id="logArea">
-            <div>System initialized. Waiting for Identity...</div>
+            <div class="messages" id="messages">
+                <div class="empty-state" id="emptyState">
+                    <div class="es-icon">🔒</div>
+                    <div class="es-text">Derive identity and connect to start</div>
+                </div>
+            </div>
+
+            <div class="input-bar">
+                <input type="text" id="msgInput" placeholder="Message…" disabled>
+                <input type="file" id="filePicker">
+                <button class="icon-btn" id="attachBtn" disabled title="Attach file">📎</button>
+                <button class="icon-btn send" id="sendBtn" disabled title="Send">➤</button>
+            </div>
+        </div>
+
+        <!-- ── Right — controls ───────────────────────────────────────── -->
+        <div class="sidebar-right">
+
+            <!-- Identity -->
+            <div class="ctrl-section">
+                <div class="ctrl-label">Identity</div>
+                <input type="password" class="ctrl-input" id="passphraseInput" placeholder="Your passphrase…"
+                    autocomplete="off">
+                <div class="ctrl-hint">
+                    Never stored. Same passphrase → same identity every session.
+                    Treat it like a wallet seed phrase.
+                </div>
+                <button class="btn btn-primary" id="deriveKeyBtn">Derive Identity</button>
+                <div id="didDisplay" class="did-display" style="display:none"></div>
+                <div id="identityStatus" style="font-size:.62rem;margin-top:6px;color:var(--text3)"></div>
+            </div>
+
+            <!-- Connection -->
+            <div class="ctrl-section">
+                <div class="ctrl-label">Connection</div>
+                <div class="status-row">
+                    <span class="dot" id="connDot2"></span>
+                    <span id="connText">Disconnected</span>
+                </div>
+                <button class="btn btn-primary" id="handshakeBtn" disabled>
+                    Initiate Handshake
+                </button>
+            </div>
+
+            <!-- File transfer status -->
+            <div class="ctrl-section" id="fileStatusSection" style="display:none">
+                <div class="ctrl-label">File Transfer</div>
+                <div id="fileStatusText" style="font-size:.65rem;color:var(--text2)"></div>
+            </div>
+
+            <!-- Session info -->
+            <div class="ctrl-section">
+                <div class="ctrl-label">Session</div>
+                <div style="font-size:.62rem;color:var(--text3);line-height:1.7">
+                    <div>Protocol: <span style="color:var(--amber)">Double Ratchet</span></div>
+                    <div>Cipher: <span style="color:var(--amber)">AES-256-GCM</span></div>
+                    <div>KX: <span style="color:var(--amber)">ECDH P-384</span></div>
+                    <div>Identity: <span style="color:var(--amber)">Ed25519 PBKDF2</span></div>
+                    <div>Traffic: <span style="color:var(--amber)">Padded UDP cover</span></div>
+                </div>
+            </div>
+
         </div>
     </div>
 
     <script type="module">
         import { HandshakeManager } from './handshake.js';
 
+        // Frame type constants (match rufrone_core.py)
+        const FRAME_TEXT = 0x01;
+        const FRAME_BINARY = 0x02;
+        const FRAME_EOF = 0x03;
+        const urlParams = new URLSearchParams(window.location.search);
+        const daemonWsUrl = urlParams.get('ws') || 'ws://localhost:8080';
+        const peerLabel = urlParams.get('peer') || '';
+
         let coreSocket = null;
         let handshakeManager = null;
+        let identityKeyPair = null;
+        let identityDID = null;
+        let myHandle = 'me';
+        let peerHandle = 'peer';
 
-        // ── Receive state ─────────────────────────────────────────────────────────
-        // rx holds everything about the currently incoming file transfer.
-        // It is replaced wholesale on each new FILE_META — no partial resets,
-        // no shared mutable flags, no cross-transfer bleed.
-        //
-        //   rx = { meta, chunks: Uint8Array[], receivedBytes: number, done: boolean }
-        //
-        // "done" is set synchronously before any await so no concurrent path can
-        // double-trigger finalize().
-        let rx = null;
+        let rx = null; // active file receive state
 
-        const log = msg => {
-            const t = new Date().toLocaleTimeString();
-            const la = document.getElementById('logArea');
-            la.innerHTML += `<div>[${t}] ${msg}</div>`;
-            la.scrollTop = la.scrollHeight;
-        };
-
-        // ── Decrypt and offer download ────────────────────────────────────────────
-        // Called exactly once per transfer, by whichever path (byte-count or EOF)
-        // fires first.  "state" is a snapshot of rx taken before rx was cleared.
-        async function finalize(state) {
-            const { meta, chunks, receivedBytes } = state;
-
-            const prog = document.getElementById('fileProgress');
-            if (prog) { prog.innerText = `✅ Transfer complete! Decrypting ${meta.filename}...`; prog.id = ''; }
-
-            // Reconstruct — clamp to declared size in case last chunk was 1 byte over
-            const size = Math.min(receivedBytes, meta.size);
-            const fullBuffer = new Uint8Array(size);
-            let offset = 0;
-            for (const chunk of chunks) {
-                const space = fullBuffer.length - offset;
-                if (space <= 0) break;
-                const slice = chunk.subarray(0, Math.min(chunk.length, space));
-                fullBuffer.set(slice, offset);
-                offset += slice.length;
-            }
-
-            // Wire layout: [12-byte AES-GCM IV][ciphertext]
-            const iv = fullBuffer.slice(0, 12);
-            const ciphertext = fullBuffer.slice(12);
-
-            try {
-                const rawKey = Uint8Array.from(atob(meta.file_key), c => c.charCodeAt(0));
-                const cryptoKey = await crypto.subtle.importKey(
-                    'raw', rawKey, { name: 'AES-GCM', length: 256 }, false, ['decrypt']
-                );
-                const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, cryptoKey, ciphertext);
-
-                const url = URL.createObjectURL(new Blob([decrypted]));
-                const a = Object.assign(document.createElement('a'), {
-                    href: url, download: meta.filename,
-                    textContent: `⬇️ Save Decrypted File: ${meta.filename}`,
-                    className: 'download-link'
-                });
-                const la = document.getElementById('logArea');
-                la.appendChild(document.createElement('br'));
-                la.appendChild(a);
-                la.appendChild(document.createElement('br'));
-                log('✅ Decryption successful. File is ready.');
-            } catch (e) {
-                log(`❌ File Decryption failed: ${e.message}`);
-            }
+        const nodeStatusEl = document.getElementById('nodeStatus');
+        if (nodeStatusEl) {
+            const label = peerLabel ? `${peerLabel} · ` : '';
+            nodeStatusEl.innerHTML = `<span class="dot" id="connDot"></span>${label}${daemonWsUrl.replace(/^ws:\/\//, '')}`;
         }
 
-        // ── Identity + connect ────────────────────────────────────────────────────
+        // ── Logging ────────────────────────────────────────────────────────────────
+        function log(msg, cls = '') {
+            const la = document.getElementById('logArea');
+            const d = document.createElement('div');
+            d.className = 'log-entry' + (cls ? ' ' + cls : '');
+            const t = new Date().toLocaleTimeString('en', { hour12: false });
+            d.textContent = `[${t}] ${msg}`;
+            la.appendChild(d);
+            la.scrollTop = la.scrollHeight;
+        }
 
-        document.getElementById('genKeyBtn').addEventListener('click', async () => {
-            log('Generating Ed25519 keys via WebCrypto API...');
+        // ── Chat message rendering ─────────────────────────────────────────────────
+        function addSysMsg(text) {
+            const ms = document.getElementById('messages');
+            document.getElementById('emptyState')?.remove();
+            const d = document.createElement('div');
+            d.className = 'sys-msg';
+            d.textContent = text;
+            ms.appendChild(d);
+            ms.scrollTop = ms.scrollHeight;
+        }
+
+        function addChatMsg(text, mine) {
+            const ms = document.getElementById('messages');
+            document.getElementById('emptyState')?.remove();
+
+            const row = document.createElement('div');
+            row.className = 'msg-row ' + (mine ? 'mine' : 'theirs');
+
+            const av = document.createElement('div');
+            av.className = 'msg-avatar';
+            av.textContent = mine ? '🔑' : '👤';
+
+            const wrap = document.createElement('div');
+            // min-width:0 is required on flex children that contain text — without it
+            // the flex item won't shrink below its content size and the bubble ignores
+            // max-width, causing words to stack vertically instead of wrapping.
+            wrap.style.cssText = 'min-width:0; max-width:100%';
+
+            const bub = document.createElement('div');
+            bub.className = 'msg-bubble';
+            bub.textContent = text;
+
+            const ts = document.createElement('div');
+            ts.className = 'msg-time';
+            ts.textContent = new Date().toLocaleTimeString('en', { hour: '2-digit', minute: '2-digit', hour12: false });
+
+            wrap.appendChild(bub);
+            wrap.appendChild(ts);
+            row.appendChild(av);
+            row.appendChild(wrap);
+            ms.appendChild(row);
+            ms.scrollTop = ms.scrollHeight;
+            return row;
+        }
+
+        // ── File message rendering ─────────────────────────────────────────────────
+        function addFileMsg(filename, sizeBytes, mine) {
+            const ms = document.getElementById('messages');
+            document.getElementById('emptyState')?.remove();
+
+            const row = document.createElement('div');
+            row.className = 'msg-row ' + (mine ? 'mine' : 'theirs');
+
+            const av = document.createElement('div');
+            av.className = 'msg-avatar';
+            av.textContent = mine ? '🔑' : '👤';
+
+            const wrap = document.createElement('div');
+
+            const fb = document.createElement('div');
+            fb.className = 'file-bubble';
+            fb.innerHTML = `
+        <div class="file-icon">📄</div>
+        <div class="file-info">
+            <div class="file-name" title="${filename}">${filename}</div>
+            <div class="file-size">${(sizeBytes / 1024).toFixed(1)} KB</div>
+            <div class="file-progress-bar">
+                <div class="file-progress-fill" id="fpf-${filename.replace(/\W/g, '_')}" style="width:0%"></div>
+            </div>
+        </div>`;
+
+            const ts = document.createElement('div');
+            ts.className = 'msg-time';
+            ts.textContent = new Date().toLocaleTimeString('en', { hour: '2-digit', minute: '2-digit', hour12: false });
+
+            wrap.appendChild(fb);
+            wrap.appendChild(ts);
+            row.appendChild(av);
+            row.appendChild(wrap);
+            ms.appendChild(row);
+            ms.scrollTop = ms.scrollHeight;
+
+            return { row, progressId: `fpf-${filename.replace(/\W/g, '_')}` };
+        }
+
+        function addDownloadMsg(filename, sizeBytes, url) {
+            const ms = document.getElementById('messages');
+            const row = document.createElement('div');
+            row.className = 'msg-row theirs';
+
+            const av = document.createElement('div');
+            av.className = 'msg-avatar';
+            av.textContent = '👤';
+
+            const wrap = document.createElement('div');
+            const fb = document.createElement('div');
+            fb.className = 'file-bubble';
+            fb.innerHTML = `
+        <div class="file-icon">📦</div>
+        <div class="file-info">
+            <div class="file-name" title="${filename}">${filename}</div>
+            <div class="file-size">${(sizeBytes / 1024).toFixed(1)} KB · decrypted</div>
+        </div>
+        <a href="${url}" download="${filename}" class="dl-link">Save</a>`;
+
+            const ts = document.createElement('div');
+            ts.className = 'msg-time';
+            ts.textContent = new Date().toLocaleTimeString('en', { hour: '2-digit', minute: '2-digit', hour12: false });
+
+            wrap.appendChild(fb);
+            wrap.appendChild(ts);
+            row.appendChild(av);
+            row.appendChild(wrap);
+            ms.appendChild(row);
+            ms.scrollTop = ms.scrollHeight;
+        }
+
+        // ── Ed25519 key derivation from passphrase ─────────────────────────────────
+        //
+        // WebCrypto in Chrome doesn't support importKey("raw") for Ed25519.
+        // Workaround: wrap the 32-byte PBKDF2-derived seed in a PKCS8 DER envelope
+        // and use importKey("pkcs8") which IS supported.
+        //
+        // PKCS8 DER for Ed25519 (RFC 8410):
+        //   30 2e 02 01 00 30 05 06 03 2b 65 70 04 22 04 20 <32-byte seed>
+        //
+        // Same passphrase → same 32-byte seed → same keypair → same DID → stable
+        // Safety Numbers across sessions.  Nothing is ever stored.
+
+        const PKCS8_PREFIX = new Uint8Array([
+            0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70,
+            0x04, 0x22, 0x04, 0x20
+        ]);
+
+        async function deriveIdentityFromPassphrase(passphrase) {
+            const enc = new TextEncoder();
+            const salt = enc.encode('rufrone-identity-v1');
+
+            const baseKey = await crypto.subtle.importKey(
+                'raw', enc.encode(passphrase), { name: 'PBKDF2' }, false, ['deriveBits']
+            );
+            const seedBits = await crypto.subtle.deriveBits(
+                { name: 'PBKDF2', hash: 'SHA-256', salt, iterations: 300_000 },
+                baseKey, 256
+            );
+            const seed = new Uint8Array(seedBits);
+
+            // Wrap seed in PKCS8 envelope
+            const pkcs8 = new Uint8Array(PKCS8_PREFIX.length + 32);
+            pkcs8.set(PKCS8_PREFIX, 0);
+            pkcs8.set(seed, PKCS8_PREFIX.length);
+
+            const privateKey = await crypto.subtle.importKey(
+                'pkcs8', pkcs8, { name: 'Ed25519' }, true, ['sign']
+            );
+
+            // Derive public key from private key via JWK round-trip
+            const privJwk = await crypto.subtle.exportKey('jwk', privateKey);
+            const pubJwk = { kty: privJwk.kty, crv: privJwk.crv, x: privJwk.x, key_ops: ['verify'], ext: true };
+
+            const publicKey = await crypto.subtle.importKey(
+                'jwk', pubJwk, { name: 'Ed25519' }, true, ['verify']
+            );
+
+            return { privateKey, publicKey };
+        }
+
+        async function deriveDisplayDID(publicKey) {
+            const spki = await crypto.subtle.exportKey('spki', publicKey);
+            const b64 = btoa(String.fromCharCode(...new Uint8Array(spki)));
+            return 'did:key:' + b64.substring(0, 44) + '...';
+        }
+
+        // ── Peer verification (sessionStorage only — cleared on tab close) ─────────
+        function saveVerifiedPeer(did, b64) {
+            const s = JSON.parse(sessionStorage.getItem('rufrone_peers') || '{}');
+            s[did] = b64;
+            sessionStorage.setItem('rufrone_peers', JSON.stringify(s));
+        }
+        function loadVerifiedPeer(did) {
+            return JSON.parse(sessionStorage.getItem('rufrone_peers') || '{}')[did] || null;
+        }
+
+        // ── Derive identity ────────────────────────────────────────────────────────
+        document.getElementById('deriveKeyBtn').addEventListener('click', async () => {
+            const pp = document.getElementById('passphraseInput').value.trim();
+            if (!pp) {
+                document.getElementById('identityStatus').innerHTML =
+                    '<span style="color:var(--amber)">⚠ Enter a passphrase</span>';
+                return;
+            }
+
+            const btn = document.getElementById('deriveKeyBtn');
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner"></span>Deriving…';
+            document.getElementById('identityStatus').textContent = '';
+
             try {
-                const kp = await crypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']);
-                const spki = await crypto.subtle.exportKey('spki', kp.publicKey);
-                const b64 = btoa(String.fromCharCode(...new Uint8Array(spki)));
-                document.getElementById('didDisplay').innerText = 'Your DID: did:key:' + b64.substring(0, 32) + '...';
-                log('Identity generated successfully!');
+                identityKeyPair = await deriveIdentityFromPassphrase(pp);
+                identityDID = await deriveDisplayDID(identityKeyPair.publicKey);
+
+                // Clear passphrase from DOM immediately
+                document.getElementById('passphraseInput').value = '';
+
+                const d = document.getElementById('didDisplay');
+                d.textContent = identityDID;
+                d.style.display = 'block';
+
+                document.getElementById('identityStatus').innerHTML =
+                    '<span style="color:var(--green)">✓ Ready — passphrase cleared</span>';
+
+                log('Identity derived from passphrase', 'ok');
                 connectToDaemon();
-            } catch (e) { log('Error generating keys: ' + e.message); }
+            } catch (e) {
+                document.getElementById('identityStatus').innerHTML =
+                    `<span style="color:var(--red)">${e.message}</span>`;
+                log('Identity error: ' + e.message, 'err');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Derive Identity';
+            }
         });
 
+        // ── Daemon connection ──────────────────────────────────────────────────────
+        function setConnected(on) {
+            const dots = [document.getElementById('connDot'), document.getElementById('connDot2')];
+            const ns = document.getElementById('nodeStatus');
+            dots.forEach(d => { if (d) { d.classList.toggle('on', on); } });
+            document.getElementById('connText').textContent = on ? 'Connected' : 'Disconnected';
+            if (ns) ns.classList.toggle('live', on);
+        }
+
         function connectToDaemon() {
-            coreSocket = new WebSocket('ws://localhost:8080');
+            if (coreSocket) { try { coreSocket.close(); } catch (_) { } }
+            coreSocket = new WebSocket(daemonWsUrl);
+            coreSocket.binaryType = 'arraybuffer';
 
             coreSocket.onopen = () => {
-                document.getElementById('connStatus').classList.add('connected');
-                document.getElementById('connText').innerText = 'Connected to Rufrone Core';
+                setConnected(true);
                 document.getElementById('handshakeBtn').disabled = false;
-                log('WebSocket bridge established.');
+                log('WebSocket bridge established', 'ok');
 
                 handshakeManager = new HandshakeManager(
                     coreSocket,
 
-                    // ── Text / control messages ───────────────────────────────────
-                    // FILE_META arrives here via the HandshakeManager's FILE_TRANSFER_INIT
-                    // path which calls onMessageDecrypted with "[FILE_META]:::..." prefix.
+                    // Decrypted text callback
                     (plaintext) => {
                         if (plaintext.startsWith('[FILE_META]:::')) {
                             const meta = JSON.parse(plaintext.split(':::')[1]);
-
-                            // Replace rx completely — no partial field resets
-                            const old = document.getElementById('fileProgress');
-                            if (old) old.remove();
                             rx = { meta, chunks: [], receivedBytes: 0, done: false };
+                            // Drain any chunks that arrived before META was decrypted
+                            while (pendingChunks.length > 0) {
+                                const pc = pendingChunks.shift();
+                                rx.chunks.push(pc);
+                                rx.receivedBytes += pc.length;
+                            }
 
-                            log(`📂 [Incoming File]: ${meta.filename} — ${Math.round(meta.size / 1024)} KB`);
+                            const { row, progressId } = addFileMsg(meta.filename, meta.size, false);
+                            rx.progressId = progressId;
+
+                            document.getElementById('fileStatusSection').style.display = 'block';
+                            document.getElementById('fileStatusText').textContent =
+                                `Receiving ${meta.filename}…`;
+
+                            log(`📂 Incoming: ${meta.filename} (${(meta.size / 1024).toFixed(1)} KB)`);
                         } else {
-                            log('🔓 [Decrypted MSG]: ' + plaintext);
+                            addChatMsg(plaintext, false);
                         }
                     },
 
-                    // ── Handshake established ─────────────────────────────────────
+                    // Handshake established
                     async () => {
-                        const n = await handshakeManager.generateSafetyNumber();
-                        if (n) {
+                        addSysMsg('🔐 Encrypted channel established');
+                        const safetyNum = await handshakeManager.generateSafetyNumber();
+                        if (safetyNum) {
                             const d = document.getElementById('safetyNumberDisplay');
-                            d.innerText = 'Safety Number: ' + n;
+                            d.textContent = safetyNum;
                             d.style.display = 'block';
-                            ['msgInput', 'sendBtn', 'filePicker', 'sendFileBtn']
-                                .forEach(id => document.getElementById(id).disabled = false);
+
+                            document.getElementById('peerBadge').className = 'badge badge-ok';
+                            document.getElementById('peerBadge').textContent = 'CONNECTED';
+
+                            const verEl = document.getElementById('verificationStatus');
+
+                            if (handshakeManager.theirIdentityPubKey) {
+                                const spki = await crypto.subtle.exportKey('spki', handshakeManager.theirIdentityPubKey);
+                                const b64 = btoa(String.fromCharCode(...new Uint8Array(spki)));
+                                const did = 'did:key:' + b64.substring(0, 44);
+                                const known = loadVerifiedPeer(did);
+
+                                document.getElementById('peerDID').textContent = did + '...';
+
+                                if (!known) {
+                                    verEl.innerHTML = `<span style="color:var(--amber)">⚠ New peer — verify Safety Number aloud</span><br>
+                                <button id="trustBtn" style="margin-top:6px;font-size:.6rem;padding:3px 8px;cursor:pointer;
+                                background:var(--surface3);border:1px solid var(--amber-dim);color:var(--amber);
+                                border-radius:4px;font-family:var(--font-mono)">Trust &amp; Enable Chat</button>`;
+                                    document.getElementById('trustBtn').onclick = () => {
+                                        saveVerifiedPeer(did, b64);
+                                        verEl.innerHTML = `<span style="color:var(--green)">✓ Peer trusted this session</span>`;
+                                        enableMessaging();
+                                    };
+                                    return; // don't enable until trusted
+                                } else if (known === b64) {
+                                    verEl.innerHTML = `<span style="color:var(--green)">✓ Known peer verified</span>`;
+                                } else {
+                                    verEl.innerHTML = `<span style="color:var(--red)">🚨 IDENTITY MISMATCH — BLOCKED</span>`;
+                                    addSysMsg('🚨 SECURITY ALERT: peer identity changed. Possible MITM. Blocking.');
+                                    log('SECURITY: peer identity mismatch — connection blocked', 'err');
+                                    return;
+                                }
+                            }
+                            enableMessaging();
                         }
                     },
 
-                    // ── Binary chunk handler ──────────────────────────────────────
-                    // Each binary WebSocket frame is one decoded FILE_CHUNK.
-                    // The daemon base64-encoded the raw bytes, sent them through the
-                    // traffic shaper (padded, constant-rate UDP), received them back,
-                    // decoded base64, and delivered them here as raw binary frames.
-                    // So what arrives here is exactly what the sender encrypted.
-                    async (buffer) => {
-                        if (!rx || rx.done) return;
-
-                        rx.chunks.push(new Uint8Array(buffer));
-                        rx.receivedBytes += buffer.byteLength;
-
-                        const pct = Math.min(100, Math.round((rx.receivedBytes / rx.meta.size) * 100));
-                        let prog = document.getElementById('fileProgress');
-                        if (!prog) {
-                            prog = Object.assign(document.createElement('div'), {
-                                id: 'fileProgress', style: 'color:var(--accent)'
-                            });
-                            document.getElementById('logArea').appendChild(prog);
-                        }
-                        prog.innerText = `📥 Receiving: ${pct}% (${rx.receivedBytes} / ${rx.meta.size} bytes)`;
-
-                        if (rx.receivedBytes >= rx.meta.size) {
-                            rx.done = true;   // synchronous guard — blocks re-entry
-                            const snap = rx;
-                            rx = null;   // allow next FILE_META immediately
-                            await finalize(snap);
-                        }
-                    }
+                    // Raw file chunks are handled by the dedicated socket listener below.
+                    null
                 );
 
-                // ── EOF sentinel ──────────────────────────────────────────────────
-                // The daemon enqueues a FILE_EOF after all chunks.  Because everything
-                // goes through the same traffic_shaper_loop queue, the EOF is guaranteed
-                // to arrive after all chunks — in-order delivery on the same UDP path.
-                // This acts as a reliable fallback for small files where the byte-count
-                // threshold might be satisfied in the same event loop tick as the last
-                // chunk, before the binary handler has been called.
-                coreSocket.addEventListener('message', async (event) => {
-                    if (typeof event.data !== 'string') return;
-                    let pkt;
-                    try { pkt = JSON.parse(event.data); } catch { return; }
-                    if (pkt.type !== 'RUFRONE_FILE_EOF') return;
+                handshakeManager.identityKeyPair = identityKeyPair;
 
-                    // Guard: only act if this EOF matches the current transfer
+                // EOF sentinel — only used as fallback, byte-count triggers finalize
+                coreSocket.addEventListener('message', async (ev) => {
+                    if (typeof ev.data !== 'string') return;
+                    let p; try { p = JSON.parse(ev.data); } catch { return; }
+                    if (p.type !== 'RUFRONE_FILE_EOF') return;
                     if (!rx || rx.done) return;
-                    if (pkt.transfer_id && rx.meta.transfer_id &&
-                        pkt.transfer_id !== rx.meta.transfer_id) return;
-
+                    if (rx.meta.transfer_id && p.transfer_id && rx.meta.transfer_id !== p.transfer_id) return;
+                    // Wait up to 500ms for remaining chunks before forcing finalize
+                    await new Promise(r => setTimeout(r, 500));
+                    if (!rx || rx.done) return;
                     rx.done = true;
                     const snap = rx;
                     rx = null;
                     await finalize(snap);
                 });
+
+                // Raw binary chunk handler (file chunks bypass ratchet)
+                const pendingChunks = [];
+                coreSocket.addEventListener('message', async (ev) => {
+                    if (!(ev.data instanceof ArrayBuffer)) return;
+                    const chunk = new Uint8Array(ev.data);
+                    if (!rx) {
+                        pendingChunks.push(chunk); // META not yet decrypted, buffer it
+                        return;
+                    }
+                    if (rx.done) return;
+                    // Drain any buffered chunks first
+                    while (pendingChunks.length > 0) {
+                        const pc = pendingChunks.shift();
+                        receiveFileChunk(pc);
+                    }
+                    receiveFileChunk(chunk);
+
+                    // Auto-finalize when all bytes received
+                    if (rx.receivedBytes >= rx.meta.size && !rx.done) {
+                        rx.done = true;
+                        const snap = rx;
+                        rx = null;
+                        await finalize(snap);
+                    }
+                });
             };
 
-            coreSocket.onclose = () => { log('Connection lost.'); };
+            coreSocket.onclose = () => {
+                setConnected(false);
+                document.getElementById('handshakeBtn').disabled = true;
+                log('Connection closed');
+            };
+            coreSocket.onerror = () => log('Connection error', 'err');
         }
 
-        // ── Button handlers ───────────────────────────────────────────────────────
+        function enableMessaging() {
+            ['msgInput', 'sendBtn', 'attachBtn', 'filePicker'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.disabled = false;
+            });
+            document.getElementById('chatHeaderSub').textContent =
+                'End-to-end encrypted · Double Ratchet · P-384 · Verified';
+        }
 
+        // ── File decryption + download ────────────────────────────────────────────
+        async function sha256Hex(bytes) {
+            const hash = await crypto.subtle.digest('SHA-256', bytes);
+            return Array.from(new Uint8Array(hash))
+                .map(b => b.toString(16).padStart(2, '0'))
+                .join('');
+        }
+
+        function receiveFileChunk(chunk) {
+            if (!rx) return false;
+            if (rx.done) return true;
+
+            rx.chunks.push(chunk);
+            rx.receivedBytes += chunk.length;
+
+            const pct = Math.min(100, Math.round((rx.receivedBytes / rx.meta.size) * 100));
+            const pf = document.getElementById(rx.progressId);
+            if (pf) pf.style.width = pct + '%';
+            document.getElementById('fileStatusText').textContent =
+                'Receiving ' + rx.meta.filename + ': ' + pct + '%';
+
+            return true;
+        }
+
+        async function finalize(state) {
+            const { meta, chunks, receivedBytes } = state;
+
+            const pf = document.getElementById(state.progressId);
+            if (pf) pf.style.width = '100%';
+
+            document.getElementById('fileStatusText').textContent = `Decrypting ${meta.filename}…`;
+
+            const size = Math.min(receivedBytes, meta.size);
+            const fullBuffer = new Uint8Array(size);
+            let offset = 0;
+            for (const chunk of chunks) {
+                const sp = fullBuffer.length - offset;
+                if (sp <= 0) break;
+                const sl = chunk.subarray(0, Math.min(chunk.length, sp));
+                fullBuffer.set(sl, offset);
+                offset += sl.length;
+            }
+
+            const iv = fullBuffer.slice(0, 12);
+            const ciphertext = fullBuffer.slice(12);
+
+            try {
+                const rawKey = Uint8Array.from(atob(meta.file_key), c => c.charCodeAt(0));
+                const blobHash = await sha256Hex(fullBuffer);
+                const keyHash = await sha256Hex(rawKey);
+                if (meta.blob_hash || meta.key_hash) {
+                    console.log('FILE_DEBUG_RECV', {
+                        transfer_id: meta.transfer_id,
+                        expected_blob_hash: meta.blob_hash,
+                        actual_blob_hash: blobHash,
+                        expected_key_hash: meta.key_hash,
+                        actual_key_hash: keyHash,
+                        size: fullBuffer.length
+                    });
+                }
+                const ck = await crypto.subtle.importKey('raw', rawKey, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
+                const dec = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, ck, ciphertext);
+                const url = URL.createObjectURL(new Blob([dec]));
+
+                addDownloadMsg(meta.filename, receivedBytes, url);
+                document.getElementById('fileStatusText').textContent = `✓ ${meta.filename} ready`;
+                log(`✓ Decrypted: ${meta.filename}`, 'ok');
+            } catch (e) {
+                console.error('DECRYPT_ERR', e.message, 'keylen:', meta.file_key ? atob(meta.file_key).length : 'NO_KEY', 'bufsize:', fullBuffer.length);
+                log(`✗ Decryption failed: ${e.message}`, 'err');
+                document.getElementById('fileStatusText').textContent = `✗ Decryption failed`;
+            }
+        }
+
+        // ── Handshake button ──────────────────────────────────────────────────────
         document.getElementById('handshakeBtn').addEventListener('click', async () => {
             if (!handshakeManager) return;
-            try { await handshakeManager.initiateHandshake(); }
-            catch (e) { log('Error: ' + e.message); }
+            try {
+                await handshakeManager.initiateHandshake();
+                log('Handshake initiated…');
+            } catch (e) { log('Handshake error: ' + e.message, 'err'); }
         });
 
-        document.getElementById('sendBtn').addEventListener('click', async () => {
-            const text = document.getElementById('msgInput').value;
+        // ── Send message ──────────────────────────────────────────────────────────
+        async function sendMessage() {
+            const inp = document.getElementById('msgInput');
+            const text = inp.value.trim();
             if (!text || !handshakeManager || handshakeManager.state !== 'ESTABLISHED') return;
-            await handshakeManager.sendEncryptedMessage(text);
-            document.getElementById('msgInput').value = '';
+            if (!handshakeManager.ratchet || !handshakeManager.ratchet.sendChainKey) {
+                log('Send blocked: waiting for ratchet send key. Have the peer send one encrypted message first.', 'err');
+                return;
+            }
+            try {
+                await handshakeManager.sendEncryptedMessage(text);
+                addChatMsg(text, true);
+                inp.value = '';
+            } catch (e) {
+                log('Send failed: ' + e.message, 'err');
+            }
+        }
+
+        document.getElementById('sendBtn').addEventListener('click', sendMessage);
+        document.getElementById('msgInput').addEventListener('keydown', e => {
+            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
         });
 
-        document.getElementById('sendFileBtn').addEventListener('click', async () => {
-            const file = document.getElementById('filePicker').files[0];
+        // ── File attach ───────────────────────────────────────────────────────────
+        document.getElementById('attachBtn').addEventListener('click', () => {
+            document.getElementById('filePicker').click();
+        });
+
+        document.getElementById('filePicker').addEventListener('change', async (e) => {
+            const file = e.target.files[0];
             if (!file || !handshakeManager || handshakeManager.state !== 'ESTABLISHED') return;
+            if (!handshakeManager.ratchet || !handshakeManager.ratchet.sendChainKey) {
+                log('File send blocked: waiting for ratchet send key. Have the peer send one encrypted message first.', 'err');
+                e.target.value = '';
+                return;
+            }
+            try {
 
-            log(`[File] Preparing ${file.name} for encrypted transfer...`);
+            log(`[File] Preparing ${file.name}…`);
 
-            // Encrypt the file client-side with a fresh AES-GCM key
             const fileKey = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
             const exportedKey = await crypto.subtle.exportKey('raw', fileKey);
             const base64Key = btoa(String.fromCharCode(...new Uint8Array(exportedKey)));
-
-            const arrayBuffer = await file.arrayBuffer();
+            const ab = await file.arrayBuffer();
             const iv = crypto.getRandomValues(new Uint8Array(12));
-            const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, fileKey, arrayBuffer);
+            const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, fileKey, ab);
 
-            // Wire layout: [12-byte IV][AES-GCM ciphertext]
-            const finalBuffer = new Uint8Array(iv.length + ciphertext.byteLength);
-            finalBuffer.set(iv, 0);
-            finalBuffer.set(new Uint8Array(ciphertext), iv.length);
+            const fb = new Uint8Array(iv.length + ct.byteLength);
+            fb.set(iv, 0);
+            fb.set(new Uint8Array(ct), iv.length);
 
-            const transferId = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+            const tid = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+            const blobHash = await sha256Hex(fb);
+            const keyHash = await sha256Hex(new Uint8Array(exportedKey));
+            console.log('FILE_DEBUG_SEND', {
+                transfer_id: tid,
+                blob_hash: blobHash,
+                key_hash: keyHash,
+                size: fb.length
+            });
 
-            // SECURITY FIX: encrypt the file metadata through the Double Ratchet
-            // before sending, exactly like a chat message.
-            //
-            // Previously this was sent as a plaintext FILE_TRANSFER_INIT JSON packet,
-            // which meant filename, file size, and — critically — the AES-GCM file_key
-            // were all visible to anyone reading the WebSocket stream between the
-            // browser and the local daemon.  An attacker with access to that stream
-            // could trivially decrypt the file content even without breaking the ratchet.
-            //
-            // Now the meta is serialised to a JSON string prefixed with [FILE_META]:::
-            // and passed to sendEncryptedMessage(), which runs it through the ratchet's
-            // AES-GCM + DH ratchet step — the same path as every chat message.
-            // The receiver's onMessageDecrypted callback already checks for this prefix
-            // and routes it correctly, so no changes are needed on the receive side.
-            //
-            // Ordering guarantee: sendEncryptedMessage sends synchronously over the
-            // WebSocket.  The HTTP upload to port 8081 happens immediately after.
-            // The daemon's enqueue_file_transfer() yields to the event loop between
-            // chunks (await asyncio.sleep(0)), so the meta MESSAGE packet will have
-            // been forwarded through the traffic shaper and delivered to the receiver
-            // before the first FILE_CHUNK packet is dequeued.  No artificial delay needed.
-            const metaPlaintext = `[FILE_META]:::${JSON.stringify({
-                filename: file.name,
-                size: finalBuffer.length,
-                file_key: base64Key,
-                transfer_id: transferId
-            })}`;
-            await handshakeManager.sendEncryptedMessage(metaPlaintext);
+            await handshakeManager.sendEncryptedMessage(`[FILE_META]:::${JSON.stringify({
+                filename: file.name, size: fb.length, file_key: base64Key, transfer_id: tid,
+                blob_hash: blobHash, key_hash: keyHash
+            })}`);
 
-            const formData = new FormData();
-            formData.append('file', new Blob([finalBuffer]), file.name);
-            formData.append('transfer_id', transferId);
+            addFileMsg(file.name, fb.length, true);
 
-            log('[File] Metadata encrypted via ratchet. Sending chunks through traffic shaper...');
-            try {
-                await fetch('http://localhost:8081/upload', { method: 'POST', body: formData });
-                log('[File] Daemon accepted — chunking through traffic shaper.');
-            } catch (err) {
-                log('❌ Error uploading to daemon. Is aiohttp running?');
+            const CHUNK = 700;
+            for (let i = 0; i < fb.length; i += CHUNK) {
+                const chunk = fb.subarray(i, i + CHUNK);
+                const frame = new Uint8Array(1 + chunk.length);
+                frame[0] = FRAME_BINARY;
+                frame.set(chunk, 1);
+                coreSocket.send(frame.buffer);
+                if ((i / CHUNK) % 100 === 0) await new Promise(r => setTimeout(r, 0));
             }
+            const tidB = new TextEncoder().encode(tid);
+            const eof = new Uint8Array(1 + tidB.length);
+            eof[0] = FRAME_EOF;
+            eof.set(tidB, 1);
+            coreSocket.send(eof.buffer);
+
+            log(`[File] ${file.name} dispatched`, 'ok');
+            } catch (err) {
+                log(`[File] Send failed: ${err.message}`, 'err');
+            }
+            e.target.value = '';
         });
     </script>
 </body>

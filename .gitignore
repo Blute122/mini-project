@@ -1,5 +1,6 @@
 # Environments
-.env
+*.env
+TOP_SECRET_PANEL_FILE.txt
 .venv
 env/
 venv/

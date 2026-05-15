@@ -76,6 +76,13 @@ const runTests = async () => {
     mockWsAlice.setPeer(mockWsBob);
     mockWsBob.setPeer(mockWsAlice);
 
+    const aliceIdentity = await window.crypto.subtle.generateKey(
+        { name: "Ed25519" }, true, ["sign", "verify"]
+    );
+    const bobIdentity = await window.crypto.subtle.generateKey(
+        { name: "Ed25519" }, true, ["sign", "verify"]
+    );
+
     const aliceManager = new HandshakeManager(mockWsAlice, (msg) => {
         console.log("Alice UI received decrypted message:", msg);
     });
@@ -83,6 +90,8 @@ const runTests = async () => {
         console.log("Bob UI received decrypted message:", msg);
         bobDecryptedOutput = msg;
     });
+    aliceManager.identityKeyPair = aliceIdentity;
+    bobManager.identityKeyPair = bobIdentity;
 
     // Trigger
     await aliceManager.initiateHandshake();
@@ -92,6 +101,8 @@ const runTests = async () => {
 
     assert(aliceManager.state === 'ESTABLISHED', "Alice HandshakeManager reached ESTABLISHED state.");
     assert(bobManager.state === 'ESTABLISHED', "Bob HandshakeManager reached ESTABLISHED state.");
+    assert(aliceManager.canSendEncrypted(), "Alice can send immediately after handshake.");
+    assert(bobManager.canSendEncrypted(), "Bob can send immediately after handshake.");
 
     // =====================================================================
     // Test 3: End-to-End Simulation
@@ -116,6 +127,13 @@ const runTests = async () => {
     mockWsAlice4.setPeer(mockWsBob4);
     mockWsBob4.setPeer(mockWsAlice4);
 
+    const aliceIdentity4 = await window.crypto.subtle.generateKey(
+        { name: "Ed25519" }, true, ["sign", "verify"]
+    );
+    const bobIdentity4 = await window.crypto.subtle.generateKey(
+        { name: "Ed25519" }, true, ["sign", "verify"]
+    );
+
     let aliceSafetyNumber = null;
     let bobSafetyNumber = null;
 
@@ -125,6 +143,8 @@ const runTests = async () => {
     const bobManager4 = new HandshakeManager(mockWsBob4, () => { }, async () => {
         bobSafetyNumber = await bobManager4.generateSafetyNumber();
     });
+    aliceManager4.identityKeyPair = aliceIdentity4;
+    bobManager4.identityKeyPair = bobIdentity4;
 
     await aliceManager4.initiateHandshake();
 
