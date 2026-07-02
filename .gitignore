@@ -23,3 +23,10 @@ __pycache__/
 # OS generated files
 .DS_Store
 Thumbs.db
+
+# Attacker-demo capture artifacts (transport recordings — do not publish)
+attack_capture.ndjson
+attack_capture.enabled
+attacker_capture.etl
+attacker_capture.txt
+*.etl
