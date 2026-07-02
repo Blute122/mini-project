@@ -831,6 +831,99 @@
         const FRAME_TEXT = 0x01;
         const FRAME_BINARY = 0x02;
         const FRAME_EOF = 0x03;
+
+        // ── Reliable, sequenced file framing ───────────────────────────────────────
+        // Each binary chunk carries an 8-byte cleartext header: uint32 transfer-num
+        // + uint32 sequence index. The daemon stays blind — it only base64-forwards
+        // this payload. Sequencing makes reassembly order-independent (UDP reorder /
+        // dup safe) and, combined with NAK retransmission over the encrypted ratchet
+        // channel, makes transfers reliable over lossy public networks.
+        const FILE_DATA_CHUNK = 640;   // raw ciphertext bytes per packet (fits 1024 wire after base64+pad)
+        const FILE_HEADER_LEN = 8;     // uint32 tnum + uint32 seq
+        const FILE_MAX_NAK = 256;      // cap missing-seqs requested per NAK round
+        const FILE_MAX_RETRIES = 12;   // give up after this many NAK rounds
+        const outgoingFiles = new Map(); // tnum -> { fb, totalChunks } kept for retransmission
+
+        function u32ToBytes(n) {
+            const b = new Uint8Array(4);
+            new DataView(b.buffer).setUint32(0, n >>> 0, false);
+            return b;
+        }
+        function bytesToU32(bytes, off) {
+            return new DataView(bytes.buffer, bytes.byteOffset + off, 4).getUint32(0, false);
+        }
+        function buildFileFrame(tnum, seq, dataSlice) {
+            const frame = new Uint8Array(1 + FILE_HEADER_LEN + dataSlice.length);
+            frame[0] = FRAME_BINARY;
+            frame.set(u32ToBytes(tnum), 1);
+            frame.set(u32ToBytes(seq), 5);
+            frame.set(dataSlice, 1 + FILE_HEADER_LEN);
+            return frame.buffer;
+        }
+        // Resend specific chunks a receiver reported missing (NAK service, sender side).
+        function resendFileChunks(tnum, seqs) {
+            const rec = outgoingFiles.get(tnum);
+            if (!rec) return;
+            for (const seq of seqs) {
+                if (seq < 0 || seq >= rec.totalChunks) continue;
+                const start = seq * FILE_DATA_CHUNK;
+                const dataSlice = rec.fb.subarray(start, start + FILE_DATA_CHUNK);
+                coreSocket.send(buildFileFrame(tnum, seq, dataSlice));
+            }
+        }
+        // Place a received chunk at its correct offset (receiver side, order-independent).
+        function placeFileChunk(seq, data) {
+            if (!rx || rx.done) return;
+            if (rx.received.has(seq)) return;               // duplicate — ignore
+            const offset = seq * FILE_DATA_CHUNK;
+            if (offset >= rx.buffer.length) return;         // out of range — ignore
+            const writable = Math.min(data.length, rx.buffer.length - offset);
+            rx.buffer.set(data.subarray(0, writable), offset);
+            rx.received.add(seq);
+            rx.receivedBytes += writable;
+            const pct = rx.totalChunks > 0
+                ? Math.min(100, Math.floor((rx.received.size / rx.totalChunks) * 100))
+                : 0;
+            const pf = document.getElementById(rx.progressId);
+            if (pf) pf.style.width = pct + '%';
+            document.getElementById('fileStatusText').textContent =
+                'Receiving ' + rx.meta.filename + ': ' + pct + '%';
+        }
+        // Ask the peer to retransmit any chunks still missing (receiver side).
+        async function requestMissingChunks() {
+            if (!rx || rx.done) return;
+            if (rx.received.size >= rx.totalChunks) return; // complete — finalize handles it
+            if (rx.nakRounds >= FILE_MAX_RETRIES) {
+                log(`✗ File incomplete after ${FILE_MAX_RETRIES} retries: ${rx.received.size}/${rx.totalChunks} chunks`, 'err');
+                document.getElementById('fileStatusText').textContent = `✗ Incomplete transfer: ${rx.meta.filename}`;
+                return;
+            }
+            if (!handshakeManager || !handshakeManager.canSendEncrypted()) {
+                log('✗ Cannot recover file: no send channel to peer yet', 'err');
+                return;
+            }
+            const missing = [];
+            for (let seq = 0; seq < rx.totalChunks && missing.length < FILE_MAX_NAK; seq++) {
+                if (!rx.received.has(seq)) missing.push(seq);
+            }
+            if (missing.length === 0) return;
+            rx.nakRounds++;
+            document.getElementById('fileStatusText').textContent =
+                `Recovering ${rx.meta.filename}: requesting ${missing.length} missing chunk(s)…`;
+            log(`↻ Requesting ${missing.length} missing chunk(s) [round ${rx.nakRounds}]`);
+            const tnum = rx.tnum;
+            try {
+                await handshakeManager.sendEncryptedMessage(`[FILE_NAK]:::${JSON.stringify({ tnum, missing })}`);
+            } catch (e) {
+                log(`✗ Could not request missing chunks: ${e.message}`, 'err');
+                return;
+            }
+            // Re-check after a grace period; NAK again if chunks are still outstanding.
+            if (rx.eofTimer) clearTimeout(rx.eofTimer);
+            rx.eofTimer = setTimeout(() => {
+                if (rx && !rx.done && rx.tnum === tnum) requestMissingChunks();
+            }, 1500);
+        }
         const urlParams = new URLSearchParams(window.location.search);
         const daemonWsUrl = urlParams.get('ws') || 'ws://localhost:8080';
         const peerLabel = urlParams.get('peer') || '';
@@ -919,6 +1012,7 @@
             av.textContent = mine ? '🔑' : '👤';
 
             const wrap = document.createElement('div');
+            wrap.style.cssText = 'min-width:0; max-width:100%';
 
             const fb = document.createElement('div');
             fb.className = 'file-bubble';
@@ -956,6 +1050,7 @@
             av.textContent = '👤';
 
             const wrap = document.createElement('div');
+            wrap.style.cssText = 'min-width:0; max-width:100%';
             const fb = document.createElement('div');
             fb.className = 'file-bubble';
             fb.innerHTML = `
@@ -1109,14 +1204,14 @@
                     // Decrypted text callback
                     (plaintext) => {
                         if (plaintext.startsWith('[FILE_META]:::')) {
-                            const meta = JSON.parse(plaintext.split(':::')[1]);
-                            rx = { meta, chunks: [], receivedBytes: 0, done: false };
-                            // Drain any chunks that arrived before META was decrypted
-                            while (pendingChunks.length > 0) {
-                                const pc = pendingChunks.shift();
-                                rx.chunks.push(pc);
-                                rx.receivedBytes += pc.length;
-                            }
+                            const meta = JSON.parse(plaintext.slice('[FILE_META]:::'.length));
+                            const totalChunks = meta.total_chunks || Math.ceil(meta.size / FILE_DATA_CHUNK);
+                            rx = {
+                                meta, tnum: meta.tnum, totalChunks,
+                                buffer: new Uint8Array(meta.size),
+                                received: new Set(), receivedBytes: 0,
+                                done: false, eofSeen: false, eofTimer: null, nakRounds: 0
+                            };
 
                             const { row, progressId } = addFileMsg(meta.filename, meta.size, false);
                             rx.progressId = progressId;
@@ -1125,7 +1220,14 @@
                             document.getElementById('fileStatusText').textContent =
                                 `Receiving ${meta.filename}…`;
 
-                            log(`📂 Incoming: ${meta.filename} (${(meta.size / 1024).toFixed(1)} KB)`);
+                            log(`📂 Incoming: ${meta.filename} (${(meta.size / 1024).toFixed(1)} KB, ${totalChunks} chunks)`);
+                        } else if (plaintext.startsWith('[FILE_NAK]:::')) {
+                            const req = JSON.parse(plaintext.slice('[FILE_NAK]:::'.length));
+                            resendFileChunks(req.tnum, req.missing || []);
+                        } else if (plaintext.startsWith('[FILE_ACK]:::')) {
+                            const ack = JSON.parse(plaintext.slice('[FILE_ACK]:::'.length));
+                            outgoingFiles.delete(ack.tnum);
+                            log('✓ Peer confirmed full receipt of file', 'ok');
                         } else {
                             addChatMsg(plaintext, false);
                         }
@@ -1183,41 +1285,40 @@
 
                 handshakeManager.identityKeyPair = identityKeyPair;
 
-                // EOF sentinel — only used as fallback, byte-count triggers finalize
+                // EOF nudge — "all chunks dispatched". Completeness is decided by the
+                // received-set, not a byte count, so any gaps trigger NAK retransmission.
                 coreSocket.addEventListener('message', async (ev) => {
                     if (typeof ev.data !== 'string') return;
                     let p; try { p = JSON.parse(ev.data); } catch { return; }
                     if (p.type !== 'RUFRONE_FILE_EOF') return;
                     if (!rx || rx.done) return;
-                    if (rx.meta.transfer_id && p.transfer_id && rx.meta.transfer_id !== p.transfer_id) return;
-                    // Wait up to 500ms for remaining chunks before forcing finalize
-                    await new Promise(r => setTimeout(r, 500));
-                    if (!rx || rx.done) return;
-                    rx.done = true;
-                    const snap = rx;
-                    rx = null;
-                    await finalize(snap);
+                    rx.eofSeen = true;
+                    if (rx.received.size >= rx.totalChunks) {
+                        if (rx.eofTimer) clearTimeout(rx.eofTimer);
+                        rx.done = true;
+                        const snap = rx;
+                        rx = null;
+                        await finalize(snap);
+                    } else {
+                        requestMissingChunks();
+                    }
                 });
 
-                // Raw binary chunk handler (file chunks bypass ratchet)
-                const pendingChunks = [];
+                // Sequenced binary chunk handler. Chunks carry [tnum][seq] so they are
+                // placed by offset — reorder/dup safe — and file payload bypasses the
+                // ratchet (it is already AES-GCM encrypted with a per-file key).
                 coreSocket.addEventListener('message', async (ev) => {
                     if (!(ev.data instanceof ArrayBuffer)) return;
-                    const chunk = new Uint8Array(ev.data);
-                    if (!rx) {
-                        pendingChunks.push(chunk); // META not yet decrypted, buffer it
-                        return;
-                    }
-                    if (rx.done) return;
-                    // Drain any buffered chunks first
-                    while (pendingChunks.length > 0) {
-                        const pc = pendingChunks.shift();
-                        receiveFileChunk(pc);
-                    }
-                    receiveFileChunk(chunk);
+                    const frame = new Uint8Array(ev.data);
+                    if (frame.length < FILE_HEADER_LEN) return;
+                    if (!rx || rx.done) return;                 // no active transfer
+                    const tnum = bytesToU32(frame, 0);
+                    if (tnum !== rx.tnum) return;               // stray / stale transfer
+                    const seq = bytesToU32(frame, 4);
+                    placeFileChunk(seq, frame.subarray(FILE_HEADER_LEN));
 
-                    // Auto-finalize when all bytes received
-                    if (rx.receivedBytes >= rx.meta.size && !rx.done) {
+                    if (rx.received.size >= rx.totalChunks && !rx.done) {
+                        if (rx.eofTimer) clearTimeout(rx.eofTimer);
                         rx.done = true;
                         const snap = rx;
                         rx = null;
@@ -1251,67 +1352,37 @@
                 .join('');
         }
 
-        function receiveFileChunk(chunk) {
-            if (!rx) return false;
-            if (rx.done) return true;
-
-            rx.chunks.push(chunk);
-            rx.receivedBytes += chunk.length;
-
-            const pct = Math.min(100, Math.round((rx.receivedBytes / rx.meta.size) * 100));
-            const pf = document.getElementById(rx.progressId);
-            if (pf) pf.style.width = pct + '%';
-            document.getElementById('fileStatusText').textContent =
-                'Receiving ' + rx.meta.filename + ': ' + pct + '%';
-
-            return true;
-        }
-
         async function finalize(state) {
-            const { meta, chunks, receivedBytes } = state;
+            const { meta, buffer } = state;
 
             const pf = document.getElementById(state.progressId);
             if (pf) pf.style.width = '100%';
 
             document.getElementById('fileStatusText').textContent = `Decrypting ${meta.filename}…`;
 
-            const size = Math.min(receivedBytes, meta.size);
-            const fullBuffer = new Uint8Array(size);
-            let offset = 0;
-            for (const chunk of chunks) {
-                const sp = fullBuffer.length - offset;
-                if (sp <= 0) break;
-                const sl = chunk.subarray(0, Math.min(chunk.length, sp));
-                fullBuffer.set(sl, offset);
-                offset += sl.length;
-            }
-
-            const iv = fullBuffer.slice(0, 12);
-            const ciphertext = fullBuffer.slice(12);
+            // buffer is already assembled at correct offsets by sequence index.
+            const iv = buffer.slice(0, 12);
+            const ciphertext = buffer.slice(12);
 
             try {
                 const rawKey = Uint8Array.from(atob(meta.file_key), c => c.charCodeAt(0));
-                const blobHash = await sha256Hex(fullBuffer);
-                const keyHash = await sha256Hex(rawKey);
-                if (meta.blob_hash || meta.key_hash) {
-                    console.log('FILE_DEBUG_RECV', {
-                        transfer_id: meta.transfer_id,
-                        expected_blob_hash: meta.blob_hash,
-                        actual_blob_hash: blobHash,
-                        expected_key_hash: meta.key_hash,
-                        actual_key_hash: keyHash,
-                        size: fullBuffer.length
-                    });
-                }
                 const ck = await crypto.subtle.importKey('raw', rawKey, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
                 const dec = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, ck, ciphertext);
                 const url = URL.createObjectURL(new Blob([dec]));
 
-                addDownloadMsg(meta.filename, receivedBytes, url);
+                addDownloadMsg(meta.filename, dec.byteLength, url);
                 document.getElementById('fileStatusText').textContent = `✓ ${meta.filename} ready`;
                 log(`✓ Decrypted: ${meta.filename}`, 'ok');
+
+                // Tell the sender it may release its retransmission buffer.
+                if (handshakeManager && handshakeManager.canSendEncrypted()) {
+                    try {
+                        await handshakeManager.sendEncryptedMessage(`[FILE_ACK]:::${JSON.stringify({ tnum: state.tnum })}`);
+                    } catch (_) { /* best-effort */ }
+                }
             } catch (e) {
-                console.error('DECRYPT_ERR', e.message, 'keylen:', meta.file_key ? atob(meta.file_key).length : 'NO_KEY', 'bufsize:', fullBuffer.length);
+                // With sequenced reassembly + NAK recovery, a GCM failure here means
+                // genuinely corrupt/tampered ciphertext, not mis-ordered packets.
                 log(`✗ Decryption failed: ${e.message}`, 'err');
                 document.getElementById('fileStatusText').textContent = `✗ Decryption failed`;
             }
@@ -1378,38 +1449,39 @@
             fb.set(new Uint8Array(ct), iv.length);
 
             const tid = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+            const tnum = crypto.getRandomValues(new Uint32Array(1))[0];
+            const totalChunks = Math.ceil(fb.length / FILE_DATA_CHUNK);
             const blobHash = await sha256Hex(fb);
             const keyHash = await sha256Hex(new Uint8Array(exportedKey));
-            console.log('FILE_DEBUG_SEND', {
-                transfer_id: tid,
-                blob_hash: blobHash,
-                key_hash: keyHash,
-                size: fb.length
-            });
+
+            // Retain the encrypted blob so we can service retransmission (NAK) requests.
+            outgoingFiles.set(tnum, { fb, totalChunks });
 
             await handshakeManager.sendEncryptedMessage(`[FILE_META]:::${JSON.stringify({
                 filename: file.name, size: fb.length, file_key: base64Key, transfer_id: tid,
-                blob_hash: blobHash, key_hash: keyHash
+                tnum, total_chunks: totalChunks, blob_hash: blobHash, key_hash: keyHash
             })}`);
 
             addFileMsg(file.name, fb.length, true);
 
-            const CHUNK = 700;
-            for (let i = 0; i < fb.length; i += CHUNK) {
-                const chunk = fb.subarray(i, i + CHUNK);
-                const frame = new Uint8Array(1 + chunk.length);
-                frame[0] = FRAME_BINARY;
-                frame.set(chunk, 1);
-                coreSocket.send(frame.buffer);
-                if ((i / CHUNK) % 100 === 0) await new Promise(r => setTimeout(r, 0));
+            for (let seq = 0; seq < totalChunks; seq++) {
+                const start = seq * FILE_DATA_CHUNK;
+                const dataSlice = fb.subarray(start, start + FILE_DATA_CHUNK);
+                coreSocket.send(buildFileFrame(tnum, seq, dataSlice));
+                if (seq % 100 === 0) await new Promise(r => setTimeout(r, 0));
             }
+
+            // EOF nudge: tells the receiver "all chunks dispatched — NAK anything missing".
             const tidB = new TextEncoder().encode(tid);
             const eof = new Uint8Array(1 + tidB.length);
             eof[0] = FRAME_EOF;
             eof.set(tidB, 1);
             coreSocket.send(eof.buffer);
 
-            log(`[File] ${file.name} dispatched`, 'ok');
+            // Auto-expire the retransmission buffer if no ACK/NAK completes the transfer.
+            setTimeout(() => outgoingFiles.delete(tnum), 5 * 60 * 1000);
+
+            log(`[File] ${file.name} dispatched (${totalChunks} chunks)`, 'ok');
             } catch (err) {
                 log(`[File] Send failed: ${err.message}`, 'err');
             }
